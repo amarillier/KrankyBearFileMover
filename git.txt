@@ -1,0 +1,12 @@
+git init
+
+git remote add allanm https://github.com/amarillier/KrankyBearFileMover
+
+
+git add README.md
+git commit -m "first commit"
+git branch -M allanm
+git remote add allanm git@github.com:amarillier/KrankyBearFileMover.git
+git push --set-upstream allanm main
+git push -u origin allanm
+git remote -v

@@ -1,0 +1,8 @@
+Release notes
+
+0.1.NEXT
+- nothing specific planned for now
+
+0.1.0 
+- initial checkin
+- Windows, Linux and MacOS notifications
