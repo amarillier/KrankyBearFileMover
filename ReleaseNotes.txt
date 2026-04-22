@@ -1,8 +1,24 @@
 Release notes
 
-0.1.NEXT
-- nothing specific planned for now
+0.2.0
+- LAN file agent (TLS 1.3 + PSK): headless mode (-file-agent / -file-agent-*), GUI window from Tools,
+  receiver command helper, virtual paths under -file-agent-root, FILEMOVER_FILEAGENT_DEBUG diagnostics.
+- Intended for peers on the same local network segment (private/link-local). For routed subnets,
+  VLANs, or port-forward setups, use SFTP, SCP, or SMB instead — the agent is not aimed at that.
+- Tray: Show/Hide walks all tracked windows; dialog stacking fixes for Help, password, file agent.
+- Windows: console attach for headless/help with -H windowsgui; compile scripts: module cache,
+  GOWORK=off, -mod=mod, synced-tree / SSH path notes.
+- macOS/Linux compile scripts: cd to repo root, committed go.mod (no fyne@latest in compile-mac),
+  native dev binary copied to ./filemover for buildrun.sh; build-config KB_VERSION_DEFAULT is the
+  packaging default (bump with ./setver.sh).
+- Version tooling: ./setver.sh fixes main.go appVersion, Info.plist sample, winres, Inno, FyneApp.toml,
+  KB_VERSION_DEFAULT (package.sh reads the latter).
+- Repo hygiene: removed unused assets/sounds and extra mascot images; packaging no longer expects sounds.
+  Info-plist icon file name aligned with KrankyBearCowboyBrown.icns.
 
-0.1.0 
-- initial checkin
-- Windows, Linux and MacOS notifications
+0.1.1 (not previously tagged; summarized here)
+- Improvements, color panel options, rsync-related work.
+
+0.1.0
+- Initial check-in
+- Windows, Linux, and macOS builds

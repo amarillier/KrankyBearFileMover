@@ -3,12 +3,14 @@
 set -euo pipefail
 PATH="/opt/homebrew/bin:$PATH"
 
-# fpm-based packager for KrankyBear FileMover
-# - macOS: Packages bin/filemover-macos-{arch} as .pkg installer to /Applications
-# - Linux: Packages bin/filemover-linux-amd64 as .deb and .rpm installers
-# - macOS: Installs as KrankyBearFileMover.app bundle structure
-# - Linux: Includes Resources/Images -> /opt/local/bin/Resources/Images
-# - Linux: Includes Resources/Sounds -> /opt/local/bin/Resources/Sounds
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# shellcheck disable=SC1091
+source "${SCRIPT_DIR}/build-config.sh"
+
+# Packager for ${KB_PROJECT_TITLE}
+# - macOS: fpm -t osxpkg → ${KB_APP_BUNDLE_APP} in /Applications (optional: packaging/macos/build-pkg.sh for Installer license UI)
+# - Linux: fpm — .deb and .rpm (RPM is skipped when this script runs on macOS; build RPM on Linux)
+# - Images embedded in binary (repo keeps only icons used by build / Inno / winres / bundled themes)
 # - Outputs to ./installers (configurable)
 
 usage() {
@@ -16,33 +18,35 @@ usage() {
 Usage: ./package.sh [linux|mac|all] [ENV_VARS]
 
 Arguments:
-  linux       Build Linux packages (.deb and .rpm)
+  linux       Build Linux packages (.deb and .rpm; .rpm only when not on macOS)
   mac         Build macOS package (.pkg)
   all         Build both Linux and macOS packages
 
 Environment variables (optional):
-  VERSION     Package version (default: 0.1.3)
+  VERSION     Package version (default: ${KB_VERSION_DEFAULT})
   ITERATION   Package iteration/release (default: 1)
   ARCH        Target arch: amd64|arm64 (default: native for mac, amd64 for linux)
   OUTDIR      Output directory (default: ./installers)
-  MAINTAINER  Maintainer (default: amarillier@gmail.com)
-  VENDOR      Vendor (default: KrankyBear)
-  URL         Project URL (default: https://github.com/amarillier/KrankyBearFileMover)
-  LICENSE     License (default: GNU GPL v3)
-  REPLACES    Comma-separated list of packages this replaces (default: filemover)
-              Allows overwriting shared files like /opt/local/bin/Resources/LICENSE
+  MAINTAINER  Maintainer (default: ${KB_MAINTAINER_DEFAULT})
+  VENDOR      Vendor (default: ${KB_VENDOR_DEFAULT})
+  URL         Project URL (default: ${KB_HOMEPAGE})
+  LICENSE     License (default: ${KB_LICENSE_DEFAULT})
 
 Examples:
   # Build macOS package
   ./package.sh mac
   ./package.sh mac VERSION=1.2.3 ARCH=amd64
   
-  # Build Linux packages
+  # Build Linux packages (resources are bundled in the package)
   ./package.sh linux
-  ./package.sh linux VERSION=1.2.3 ARCH=amd64
   
   # Build both
   ./package.sh all VERSION=1.2.3
+  
+  # Install on Linux:
+  apt install ./${KB_FPM_NAME}_*.deb
+  # or:
+  dpkg -i ./${KB_FPM_NAME}_*.deb
 EOF
 }
 
@@ -84,17 +88,14 @@ do
 done
 
 # Configurable via env vars
-NAME=${NAME:-KrankyBearFileMover}
-VERSION=${VERSION:-0.1.3}
+NAME=${NAME:-${KB_FPM_NAME}}
+VERSION=${VERSION:-${KB_VERSION_DEFAULT}}
 ITERATION=${ITERATION:-1}
 OUTDIR=${OUTDIR:-./installers}
-MAINTAINER=${MAINTAINER:-"amarillier@gmail.com"}
-VENDOR=${VENDOR:-"KrankyBear"}
-URL=${URL:-"https://github.com/amarillier/KrankyBearFileMover"}
-LICENSE=${LICENSE:-"GNU GPL v3"}
-# Packages this can replace (allows overwriting shared files like LICENSE)
-# Default includes common KrankyBear packages that share /opt/local/bin/Resources/LICENSE
-REPLACES=${REPLACES:-"filemover"}
+MAINTAINER=${MAINTAINER:-${KB_MAINTAINER_DEFAULT}}
+VENDOR=${VENDOR:-${KB_VENDOR_DEFAULT}}
+URL=${URL:-${KB_HOMEPAGE}}
+LICENSE=${LICENSE:-${KB_LICENSE_DEFAULT}}
 
 # Function to build packages for a specific type
 build_package() {
@@ -135,21 +136,19 @@ build_package() {
 
   # Source assets - depends on TYPE
   # Determine binary name early for macOS staging
-  BIN_NAME="KrankyBearFileMover"
+  BIN_NAME="${KB_APP_BUNDLE_EXE}"
   
   if [[ "$TYPE" == "mac" ]]
   then
-    SRC_BIN="bin/filemover-macos-${PKG_ARCH}"
-    SRC_RESOURCES="Resources"
+    SRC_BIN="bin/${KB_FPM_NAME}-macos-${PKG_ARCH}"
+    SRC_RESOURCES="assets"
     SRC_INFO_PLIST="Info-plist.txt"
     SRC_README_PLIST="Readme-plist.txt"
     # These will be set from staging directory later
     SRC_IMAGES=""
-    SRC_SOUNDS=""
   else
-    SRC_BIN="bin/filemover-linux-amd64"
-    SRC_IMAGES="Resources/Images"
-    SRC_SOUNDS="Resources/Sounds"
+    SRC_BIN="bin/${KB_FPM_NAME}-linux-amd64"
+    SRC_IMAGES="assets/images"
     SRC_RELEASE_NOTES="ReleaseNotes.txt"
     SRC_LICENSE="LICENSE"
   fi
@@ -172,14 +171,9 @@ build_package() {
       echo "Error: Missing directory $SRC_RESOURCES" >&2
       exit 1
     fi
-    if [[ ! -d "$SRC_RESOURCES/Images" ]]
+    if [[ ! -d "$SRC_RESOURCES/images" ]]
     then
-      echo "Error: Missing directory $SRC_RESOURCES/Images" >&2
-      exit 1
-    fi
-    if [[ ! -d "$SRC_RESOURCES/Sounds" ]]
-    then
-      echo "Error: Missing directory $SRC_RESOURCES/Sounds" >&2
+      echo "Error: Missing directory $SRC_RESOURCES/images" >&2
       exit 1
     fi
     if [[ ! -f "$SRC_INFO_PLIST" ]]
@@ -187,15 +181,15 @@ build_package() {
       echo "Error: Missing file $SRC_INFO_PLIST" >&2
       exit 1
     fi
+    if [[ ! -f "$SRC_README_PLIST" ]]
+    then
+      echo "Error: Missing file $SRC_README_PLIST" >&2
+      exit 1
+    fi
   else
     if [[ ! -d "$SRC_IMAGES" ]]
     then
       echo "Error: Missing directory $SRC_IMAGES" >&2
-      exit 1
-    fi
-    if [[ ! -d "$SRC_SOUNDS" ]]
-    then
-      echo "Error: Missing directory $SRC_SOUNDS" >&2
       exit 1
     fi
     if [[ ! -f "$SRC_RELEASE_NOTES" ]]
@@ -221,95 +215,130 @@ build_package() {
   if [[ "$TYPE" == "mac" ]]
   then
     # Build the complete .app bundle structure
-    APP_BUNDLE="KrankyBearFileMover.app"
+    APP_BUNDLE="${KB_APP_BUNDLE_APP}"
     echo "Building .app bundle: $APP_BUNDLE..."
     
     # Remove existing bundle if present
     rm -rf "$APP_BUNDLE"
     
     # Create app bundle structure
-    mkdir -p "$APP_BUNDLE/Contents/MacOS/Resources"
+    mkdir -p "$APP_BUNDLE/Contents/MacOS/assets"
     
     # Copy binary to Contents/MacOS
     cp "$SRC_BIN" "$APP_BUNDLE/Contents/MacOS/$BIN_NAME"
     
-    # Create symlink: template -> KrankyBearFileMover in Contents/MacOS
-    ln -s "$BIN_NAME" "$APP_BUNDLE/Contents/MacOS/filemover"
+    # Symlink CLI-style name -> main executable in Contents/MacOS
+    ln -sf "$BIN_NAME" "$APP_BUNDLE/Contents/MacOS/${KB_CLI_NAME}"
     
-    # Copy Resources subdirectories to Contents/MacOS/Resources
-    cp -R "$SRC_RESOURCES/Images" "$APP_BUNDLE/Contents/MacOS/Resources/Images"
-    cp -R "$SRC_RESOURCES/Sounds" "$APP_BUNDLE/Contents/MacOS/Resources/Sounds"
-    cp -R "$SRC_RESOURCES/ReleaseNotes.txt" "$APP_BUNDLE/Contents/MacOS/Resources/ReleaseNotes.txt"
+    # Copy ReleaseNotes.txt and License.txt to assets (UI images are embedded in binary)
+    cp "$SRC_RESOURCES/ReleaseNotes.txt" "$APP_BUNDLE/Contents/MacOS/assets/ReleaseNotes.txt"
+    if [[ -f "$SRC_RESOURCES/License.txt" ]]; then
+      cp "$SRC_RESOURCES/License.txt" "$APP_BUNDLE/Contents/MacOS/assets/License.txt"
+    elif [[ -f "LICENSE" ]]; then
+      cp "LICENSE" "$APP_BUNDLE/Contents/MacOS/assets/License.txt"
+    fi
+
+    # UI locale packs (*.json, *.TESTING.md, help_*.txt) beside the executable: Contents/MacOS/assets/i18n/
+    if [[ -d "$SRC_RESOURCES/i18n" ]] && [[ -n "$(ls -A "$SRC_RESOURCES/i18n" 2>/dev/null)" ]]; then
+      mkdir -p "$APP_BUNDLE/Contents/MacOS/assets/i18n"
+      cp -R "$SRC_RESOURCES/i18n/." "$APP_BUNDLE/Contents/MacOS/assets/i18n/"
+    fi
     
-    # Set proper permissions on Resources directories (755 = rwxr-xr-x)
-    chmod -R 755 "$APP_BUNDLE/Contents/MacOS/Resources"
+    # Set proper permissions on assets directory (755 = rwxr-xr-x)
+    chmod -R 755 "$APP_BUNDLE/Contents/MacOS/assets"
     
-    # Copy Info-plist.txt to Contents
+    # Copy Info-plist.txt and Readme-plist.txt to Contents
+    # Note: Using .txt extension to prevent fpm bundle detection issues
     cp "$SRC_INFO_PLIST" "$APP_BUNDLE/Contents/Info-plist.txt"
     cp "$SRC_README_PLIST" "$APP_BUNDLE/Contents/Readme-plist.txt"
     
-    # Verify files were copied correctly
-    if [[ ! -d "$APP_BUNDLE/Contents/MacOS/Resources/Images" ]] || [[ -z "$(ls -A "$APP_BUNDLE/Contents/MacOS/Resources/Images" 2>/dev/null)" ]]
+    # Verify essential files were copied correctly
+    if [[ ! -f "$APP_BUNDLE/Contents/MacOS/$BIN_NAME" ]]
     then
-      echo "Error: Images directory is empty or missing in app bundle" >&2
+      echo "Error: Binary is missing in app bundle" >&2
       exit 1
     fi
-    if [[ ! -d "$APP_BUNDLE/Contents/MacOS/Resources/Sounds" ]] || [[ -z "$(ls -A "$APP_BUNDLE/Contents/MacOS/Resources/Sounds" 2>/dev/null)" ]]
+    if [[ ! -f "$APP_BUNDLE/Contents/Info-plist.txt" ]]
     then
-      echo "Error: Sounds directory is empty or missing in app bundle" >&2
+      echo "Error: Info-plist.txt is missing in app bundle" >&2
+      exit 1
+    fi
+    if [[ ! -f "$APP_BUNDLE/Contents/Readme-plist.txt" ]]
+    then
+      echo "Error: Readme-plist.txt is missing in app bundle" >&2
       exit 1
     fi
     
     echo "App bundle created successfully."
     
-  elif [[ "$TYPE" == "linux" && "$(uname -s)" == "Darwin" ]]
+  elif [[ "$TYPE" == "linux" ]]
   then
-    echo "Creating staging directory without macOS extended attributes..."
+    echo "Creating staging directory for Linux payload..."
     STAGING_DIR=$(mktemp -d -t fpm-staging.XXXXXX)
     cleanup_staging() { rm -rf "$STAGING_DIR"; }
     trap cleanup_staging EXIT INT TERM
     
-    # Copy files to staging directory using cp -X which explicitly excludes
-    # extended attributes (xattr) that cause issues with Ubuntu's dpkg
-    cp -X "$SRC_BIN" "$STAGING_DIR/filemover"
-    cp -XR "$SRC_IMAGES" "$STAGING_DIR/Images"
-    cp -XR "$SRC_SOUNDS" "$STAGING_DIR/Sounds"
+    # Copy binary
+    if [[ "$(uname -s)" == "Darwin" ]]
+    then
+      cp -X "$SRC_BIN" "$STAGING_DIR/${KB_FPM_NAME}"
+    else
+      cp "$SRC_BIN" "$STAGING_DIR/${KB_FPM_NAME}"
+    fi
+    chmod 755 "$STAGING_DIR/${KB_FPM_NAME}"
     
-    # Copy ReleaseNotes.txt and rename to ReleaseNotes-filemover.txt
-    cp "$SRC_RELEASE_NOTES" "$STAGING_DIR/ReleaseNotes-filemover.txt"
-    # Set proper permissions (644 = rw-r--r--)
-    chmod 644 "$STAGING_DIR/ReleaseNotes-filemover.txt"
+    # Bundle all assets in this package
+    echo "  Mode: Bundled resources"
+    
+    # Create assets directory structure
+    mkdir -p "$STAGING_DIR/assets"
+    
+    # Copy images (optional payload; main UI art is embedded — keeps installer lean)
+    if [[ "$(uname -s)" == "Darwin" ]]
+    then
+      cp -XR "$SRC_IMAGES" "$STAGING_DIR/assets/images"
+    else
+      cp -R "$SRC_IMAGES" "$STAGING_DIR/assets/images"
+    fi
+    SRC_IMAGES_STAGED="$STAGING_DIR/assets/images"
+    
+    # Copy ReleaseNotes.txt
+    cp "$SRC_RELEASE_NOTES" "$STAGING_DIR/assets/ReleaseNotes.txt"
+    chmod 644 "$STAGING_DIR/assets/ReleaseNotes.txt"
+    SRC_RELEASE_NOTES_STAGED="$STAGING_DIR/assets/ReleaseNotes.txt"
     
     # Copy LICENSE file
-    cp "$SRC_LICENSE" "$STAGING_DIR/LICENSE"
-    # Set proper permissions (644 = rw-r--r--)
-    chmod 644 "$STAGING_DIR/LICENSE"
-    
-    # Create symlink: template -> filemover (similar to macOS)
-    # Use relative path - RPM will handle it correctly
-    ln -s "filemover" "$STAGING_DIR/filemover"
-    
+    cp "$SRC_LICENSE" "$STAGING_DIR/assets/License.txt"
+    chmod 644 "$STAGING_DIR/assets/License.txt"
+    SRC_LICENSE_STAGED="$STAGING_DIR/assets/License.txt"
+
+    # UI locale packs for runtime merge (same layout as dev: assets/i18n next to binary)
+    if [[ -d "assets/i18n" ]] && [[ -n "$(ls -A assets/i18n 2>/dev/null)" ]]; then
+      mkdir -p "$STAGING_DIR/assets/i18n"
+      if [[ "$(uname -s)" == "Darwin" ]]; then
+        cp -XR assets/i18n/. "$STAGING_DIR/assets/i18n/"
+      else
+        cp -R assets/i18n/. "$STAGING_DIR/assets/i18n/"
+      fi
+      chmod -R a+rX "$STAGING_DIR/assets/i18n" 2>/dev/null || true
+    fi
+
     # Aggressively strip any remaining extended attributes from staging directory
-    # This is critical for Ubuntu dpkg compatibility
     if command -v xattr >/dev/null 2>&1
     then
       xattr -cr "$STAGING_DIR" 2>/dev/null || true
-      # Also remove any AppleDouble files (._*)
       find "$STAGING_DIR" -name '._*' -delete 2>/dev/null || true
+    fi
+    if [[ "$(uname -s)" == "Darwin" ]]
+    then
+      export COPYFILE_DISABLE=1
     fi
     
     # Update source paths to point to staging directory
-    SRC_BIN="$STAGING_DIR/filemover"
-    SRC_SYMLINK="$STAGING_DIR/filemover"
-    SRC_IMAGES="$STAGING_DIR/Images"
-    SRC_SOUNDS="$STAGING_DIR/Sounds"
-    SRC_RELEASE_NOTES_STAGED="$STAGING_DIR/ReleaseNotes-filemover.txt"
-    SRC_LICENSE_STAGED="$STAGING_DIR/LICENSE"
-    
-    # Also set environment variable as additional safeguard
-    export COPYFILE_DISABLE=1
+    SRC_BIN="$STAGING_DIR/${KB_FPM_NAME}"
   fi
 
+#     --license "$LICENSE"
   COMMON_ARGS=(
     -s dir
     -n "$NAME"
@@ -318,178 +347,366 @@ build_package() {
     --maintainer "$MAINTAINER"
     --vendor "$VENDOR"
     --url "$URL"
-    --license "$LICENSE"
-    --description "KrankyBear FileMover - A cross-platform GUI Template application"
+    --description "$KB_PACKAGE_DESCRIPTION"
     -f
   )
 
   if [[ "$TYPE" == "mac" ]]
   then
-    # macOS .pkg installer - installs to /Applications as .app bundle
-    PKG_OUTFILE="$OUTDIR/filemover_${VERSION}-${ITERATION}_${PKG_ARCH}.pkg"
+    # macOS .pkg via fpm osxpkg (native arch; avoids productbuild path that prompted Rosetta on some ARM Macs)
+    PKG_OUTFILE="$OUTDIR/${KB_FPM_NAME}_${VERSION}-${ITERATION}_${PKG_ARCH}.pkg"
     echo "Building macOS .pkg ($PKG_ARCH) -> $PKG_OUTFILE..."
-    
-    # macOS .app bundle structure:
-    # /Applications/KrankyBearFileMover.app/Contents/Info-plist.txt (sample Info.plist)
-    # /Applications/KrankyBearFileMover.app/Contents/MacOS/KrankyBearFileMover (executable)
-    # /Applications/KrankyBearFileMover.app/Contents/MacOS/Resources/Images (resources)
-    # /Applications/KrankyBearFileMover.app/Contents/MacOS/Resources/Sounds (sounds)
-    # Note: App looks for Resources/Images and Resources/Sounds relative to executable
-    APP_NAME="KrankyBearFileMover.app"
+
+    APP_NAME="${KB_APP_BUNDLE_APP}"
     APP_DIR="/Applications/$APP_NAME"
     CONTENTS_DIR="$APP_DIR/Contents"
     MACOS_DIR="$CONTENTS_DIR/MacOS"
-    RESOURCES_DIR="$MACOS_DIR/Resources"
-    
-    # Note: BIN_NAME is already defined earlier
-    # Map files individually from the app bundle to avoid directory nesting
-    # Build fpm file list
+    RESOURCES_DIR="$MACOS_DIR/assets"
+
     FPM_FILES=(
       "$APP_BUNDLE/Contents/MacOS/$BIN_NAME=$MACOS_DIR/$BIN_NAME"
-      "$APP_BUNDLE/Contents/MacOS/template=$MACOS_DIR/template"
+      "$APP_BUNDLE/Contents/MacOS/${KB_CLI_NAME}=$MACOS_DIR/${KB_CLI_NAME}"
       "$APP_BUNDLE/Contents/Info-plist.txt=$CONTENTS_DIR/Info-plist.txt"
       "$APP_BUNDLE/Contents/Readme-plist.txt=$CONTENTS_DIR/Readme-plist.txt"
-      "$APP_BUNDLE/Contents/MacOS/Resources/ReleaseNotes.txt=$RESOURCES_DIR/ReleaseNotes.txt"
+      "$APP_BUNDLE/Contents/MacOS/assets/ReleaseNotes.txt=$RESOURCES_DIR/ReleaseNotes.txt"
     )
-    
-    # Map Images files
-    while IFS= read -r -d '' file; do
-      rel_path="${file#$APP_BUNDLE/Contents/MacOS/Resources/Images/}"
-      FPM_FILES+=("$file=$RESOURCES_DIR/Images/$rel_path")
-    done < <(find "$APP_BUNDLE/Contents/MacOS/Resources/Images" -type f -print0)
-    
-    # Map Sounds files
-    while IFS= read -r -d '' file; do
-      rel_path="${file#$APP_BUNDLE/Contents/MacOS/Resources/Sounds/}"
-      FPM_FILES+=("$file=$RESOURCES_DIR/Sounds/$rel_path")
-    done < <(find "$APP_BUNDLE/Contents/MacOS/Resources/Sounds" -type f -print0)
-    
-    fpm \
+    if [[ -f "$APP_BUNDLE/Contents/MacOS/assets/License.txt" ]]; then
+      FPM_FILES+=("$APP_BUNDLE/Contents/MacOS/assets/License.txt=$RESOURCES_DIR/License.txt")
+    fi
+
+    if [[ -d "$APP_BUNDLE/Contents/MacOS/assets/i18n" ]]; then
+      _i18nroot="$APP_BUNDLE/Contents/MacOS/assets/i18n"
+      while IFS= read -r _i18nfile; do
+        [[ -f "$_i18nfile" ]] || continue
+        _sub="${_i18nfile#${_i18nroot}/}"
+        FPM_FILES+=("$_i18nfile=$RESOURCES_DIR/i18n/$_sub")
+      done < <(find "$_i18nroot" -type f | LC_ALL=C sort)
+    fi
+
+    if ! validate_fpm_files "${FPM_FILES[@]}"
+    then
+      echo "Aborting .pkg build due to validation errors." >&2
+      exit 1
+    fi
+
+    echo "Building package with fpm..."
+
+    MAC_PREINSTALL=$(mktemp)
+    cat > "$MAC_PREINSTALL" << EOF
+#!/bin/sh
+set -e
+if [ -d "/Applications/${KB_APP_BUNDLE_APP}" ]; then
+  rm -rf "/Applications/${KB_APP_BUNDLE_APP}"
+fi
+for _pkg in ${KB_PKGUTIL_FORGET}; do
+  pkgutil --forget "\$_pkg" 2>/dev/null || true
+done
+exit 0
+EOF
+    chmod +x "$MAC_PREINSTALL"
+
+    if fpm \
       "${COMMON_ARGS[@]}" \
       -t osxpkg \
       -a "$PKG_ARCH" \
+      --before-install "$MAC_PREINSTALL" \
       --directories "$APP_DIR" \
       --directories "$CONTENTS_DIR" \
       --directories "$MACOS_DIR" \
       --directories "$RESOURCES_DIR" \
+      --directories "$RESOURCES_DIR/i18n" \
       --package "$PKG_OUTFILE" \
+      --license "./LICENSE" \
       "${FPM_FILES[@]}"
-    
-    ./setIcon.sh Resources/Images/KrankyBearCowboyBrown.png "$PKG_OUTFILE"
+    then
+      rm -f "$MAC_PREINSTALL"
+      echo "✓ fpm packaging succeeded"
+    else
+      rm -f "$MAC_PREINSTALL"
+      echo "✗ fpm packaging failed" >&2
+      exit 1
+    fi
+
+    ./setIcon.sh "$KB_PKG_ICON" "$PKG_OUTFILE"
     echo ""
     echo "Done. Package created:"
     echo "  $PKG_OUTFILE"
+    echo ""
+    echo "To install:"
+    echo "  sudo installer -pkg $PKG_OUTFILE -target /"
+    echo "  or double-click the .pkg file"
+    echo ""
+    echo "To verify installation:"
+    echo "  ls -la /Applications/${KB_APP_BUNDLE_APP}"
+    echo "  pkgutil --pkg-info ${KB_FPM_NAME}"
+    
+    # Clean up temporary .app bundle build artifact
+    echo "Cleaning up temporary .app bundle..."
+    rm -rf "$APP_BUNDLE"
     
   else
     # Linux .deb and .rpm installers
-    DEB_OUTFILE="$OUTDIR/filemover_${VERSION}-${ITERATION}_${DEB_ARCH}.deb"
-    RPM_OUTFILE="$OUTDIR/filemover_${VERSION}-${ITERATION}_${RPM_ARCH}.rpm"
+    DEB_OUTFILE="$OUTDIR/${KB_FPM_NAME}_${VERSION}-${ITERATION}_${DEB_ARCH}.deb"
+    RPM_OUTFILE="$OUTDIR/${KB_FPM_NAME}_${VERSION}-${ITERATION}_${RPM_ARCH}.rpm"
     
     echo "Building .deb ($DEB_ARCH) -> $DEB_OUTFILE..."
+    
+    # Create post-uninstall cleanup script for .deb
+    # Only runs on purge to clean up any remaining directories
+    DEB_POSTRM_SCRIPT=$(mktemp)
+    cat > "$DEB_POSTRM_SCRIPT" << EOF
+#!/bin/sh
+case "\$1" in
+    purge)
+        rm -rf /opt/${KB_OPT_DIR}
+        ;;
+esac
+exit 0
+EOF
+    chmod +x "$DEB_POSTRM_SCRIPT"
+    
+    DEB_PREINST_SCRIPT=$(mktemp)
+    cat > "$DEB_PREINST_SCRIPT" << EOF
+#!/bin/sh
+set -e
+case "\$1" in
+  install|upgrade)
+    rm -rf /opt/${KB_OPT_DIR}
+    ;;
+esac
+exit 0
+EOF
+    chmod +x "$DEB_PREINST_SCRIPT"
+    
     # Build fpm args array for .deb
+    # Note: fpm automatically calculates Installed-Size from the staged files
+    # No --directories flag to avoid dpkg marking them as conffiles
     DEB_ARGS=(
       "${COMMON_ARGS[@]}"
       -t deb
       -a "$DEB_ARCH"
       --deb-no-default-config-files
-      --directories /opt/local/bin
-      --directories /opt/local/bin/Resources
+      --before-install "$DEB_PREINST_SCRIPT"
+      --after-remove "$DEB_POSTRM_SCRIPT"
     )
     
-    # Add --replaces if REPLACES is set (allows overwriting shared files)
-    # fpm's --replaces works for both deb and rpm packages
-    if [[ -n "$REPLACES" ]]
+    # Build fpm file list
+    # Install binary and docs flat in /opt/${KB_OPT_DIR} (no subdirectories)
+    DEB_FPM_FILES=(
+      "$SRC_BIN=/opt/${KB_OPT_DIR}/${KB_FPM_NAME}"
+    )
+    
+    # Include ReleaseNotes and LICENSE directly in install directory (not in assets/)
+    if [[ -n "$SRC_RELEASE_NOTES_STAGED" ]]
     then
-      # Convert comma-separated list and add --replaces for each package
-      # Save and restore IFS to avoid side effects
-      OLD_IFS="$IFS"
-      IFS=',' read -ra REPLACES_ARRAY <<< "$REPLACES"
-      IFS="$OLD_IFS"
-      for pkg in "${REPLACES_ARRAY[@]}"
-      do
-        # Trim whitespace from package name
-        pkg=$(echo "$pkg" | xargs)
-        [[ -n "$pkg" ]] && DEB_ARGS+=(--replaces "$pkg")
-      done
-      echo "  Note: Package will replace: $REPLACES (allows overwriting shared LICENSE file)"
+      DEB_FPM_FILES+=("$SRC_RELEASE_NOTES_STAGED=/opt/${KB_OPT_DIR}/ReleaseNotes.txt")
+    fi
+    if [[ -n "$SRC_LICENSE_STAGED" ]]
+    then
+      DEB_FPM_FILES+=("$SRC_LICENSE_STAGED=/opt/${KB_OPT_DIR}/License.txt")
+    fi
+
+    if [[ -d "$STAGING_DIR/assets/i18n" ]]; then
+      while IFS= read -r _i18nfile; do
+        [[ -f "$_i18nfile" ]] || continue
+        _rel="${_i18nfile#$STAGING_DIR/}"
+        DEB_FPM_FILES+=("$_i18nfile=/opt/${KB_OPT_DIR}/$_rel")
+      done < <(find "$STAGING_DIR/assets/i18n" -type f | LC_ALL=C sort)
     fi
     
-    # Mark LICENSE file as a config file so it's preserved on uninstall
-    # This allows the LICENSE to remain even when this package is removed,
-    # since it's shared between multiple KrankyBear packages
-    DEB_ARGS+=(--config-files "/opt/local/bin/Resources/LICENSE")
-    echo "  Note: LICENSE file will be preserved on uninstall (marked as config file)"
+    # Validate file mappings before running fpm
+    if ! validate_fpm_files "${DEB_FPM_FILES[@]}"
+    then
+      echo "Aborting .deb build due to validation errors." >&2
+      exit 1
+    fi
     
     fpm \
       "${DEB_ARGS[@]}" \
       --package "$DEB_OUTFILE" \
-      "$SRC_BIN=/opt/local/bin/filemover" \
-      "$SRC_SYMLINK=/opt/local/bin/filemover" \
-      "$SRC_IMAGES=/opt/local/bin/Resources/Images" \
-      "$SRC_SOUNDS=/opt/local/bin/Resources/Sounds" \
-      "$SRC_RELEASE_NOTES_STAGED=/opt/local/bin/Resources/ReleaseNotes-filemover.txt" \
-      "$SRC_LICENSE_STAGED=/opt/local/bin/Resources/LICENSE"
+      "${DEB_FPM_FILES[@]}"
     
-    echo ""
-    echo "Building .rpm ($RPM_ARCH) -> $RPM_OUTFILE..."
-    # Build RPM package with all files including symlink
-    # Remove --directories flags to avoid "File listed twice" warnings
-    # RPM will auto-create directories from file paths
-    RPM_ARGS=(
-      "${COMMON_ARGS[@]}"
-      -t rpm
-      -a "$RPM_ARCH"
-      --rpm-os linux
-      --rpm-auto-add-directories
-    )
-    
-    # Add --replaces if REPLACES is set (allows overwriting shared files)
-    # fpm's --replaces works for both deb and rpm packages
-    if [[ -n "$REPLACES" ]]
+    # Clean up temporary scripts
+    rm -f "$DEB_POSTRM_SCRIPT" "$DEB_PREINST_SCRIPT"
+
+    # rpmbuild via fpm is unreliable on macOS (often exits non-zero); Linux CI / Ubuntu builds RPMs.
+    if [[ "$(uname -s)" == "Darwin" ]]
     then
-      # Convert comma-separated list and add --replaces for each package
-      # Save and restore IFS to avoid side effects
-      OLD_IFS="$IFS"
-      IFS=',' read -ra REPLACES_ARRAY <<< "$REPLACES"
-      IFS="$OLD_IFS"
-      for pkg in "${REPLACES_ARRAY[@]}"
-      do
-        # Trim whitespace from package name
-        pkg=$(echo "$pkg" | xargs)
-        [[ -n "$pkg" ]] && RPM_ARGS+=(--replaces "$pkg")
-      done
-      echo "  Note: Package will replace: $REPLACES (allows overwriting shared LICENSE file)"
+      echo ""
+      echo "Skipping .rpm on macOS (fpm/rpmbuild for Linux RPM targets is not supported reliably here)."
+      echo "  Built: $DEB_OUTFILE"
+      echo "  For .rpm files, run ./package.sh linux on Linux (e.g. ./compile-linux.sh + ./package.sh linux via sync2ubuntu18.sh)."
+    else
+      echo ""
+      echo "Building .rpm ($RPM_ARCH) -> $RPM_OUTFILE..."
+
+      # Create post-uninstall cleanup script for .rpm
+      RPM_POSTUN_SCRIPT=$(mktemp)
+      cat > "$RPM_POSTUN_SCRIPT" << EOF
+#!/bin/sh
+# \$1 = 0 means this is a complete removal (not an upgrade)
+if [ "\$1" -eq 0 ]; then
+    rm -rf /opt/${KB_OPT_DIR}
+fi
+exit 0
+EOF
+      chmod +x "$RPM_POSTUN_SCRIPT"
+
+      RPM_PREINST_SCRIPT=$(mktemp)
+      cat > "$RPM_PREINST_SCRIPT" << EOF
+#!/bin/sh
+set -e
+rm -rf /opt/${KB_OPT_DIR}
+exit 0
+EOF
+      chmod +x "$RPM_PREINST_SCRIPT"
+
+      # Build RPM package with all files including symlink
+      # RPM will auto-create directories from file paths
+      RPM_ARGS=(
+        "${COMMON_ARGS[@]}"
+        -t rpm
+        -a "$RPM_ARCH"
+        --rpm-os linux
+        --rpm-auto-add-directories
+        --before-install "$RPM_PREINST_SCRIPT"
+        --after-remove "$RPM_POSTUN_SCRIPT"
+      )
+
+      # Build fpm file list
+      # Install binary and docs flat in /opt/${KB_OPT_DIR} (no subdirectories)
+      RPM_FPM_FILES=(
+        "$SRC_BIN=/opt/${KB_OPT_DIR}/${KB_FPM_NAME}"
+      )
+
+      # Include ReleaseNotes and LICENSE directly in install directory (not in assets/)
+      if [[ -n "$SRC_RELEASE_NOTES_STAGED" ]]
+      then
+        RPM_FPM_FILES+=("$SRC_RELEASE_NOTES_STAGED=/opt/${KB_OPT_DIR}/ReleaseNotes.txt")
+      fi
+      if [[ -n "$SRC_LICENSE_STAGED" ]]
+      then
+        RPM_FPM_FILES+=("$SRC_LICENSE_STAGED=/opt/${KB_OPT_DIR}/License.txt")
+      fi
+
+      if [[ -d "$STAGING_DIR/assets/i18n" ]]; then
+        while IFS= read -r _i18nfile; do
+          [[ -f "$_i18nfile" ]] || continue
+          _rel="${_i18nfile#$STAGING_DIR/}"
+          RPM_FPM_FILES+=("$_i18nfile=/opt/${KB_OPT_DIR}/$_rel")
+        done < <(find "$STAGING_DIR/assets/i18n" -type f | LC_ALL=C sort)
+      fi
+
+      # Validate file mappings before running fpm
+      if ! validate_fpm_files "${RPM_FPM_FILES[@]}"
+      then
+        echo "Aborting .rpm build due to validation errors." >&2
+        exit 1
+      fi
+
+      fpm \
+        "${RPM_ARGS[@]}" \
+        --package "$RPM_OUTFILE" \
+        "${RPM_FPM_FILES[@]}"
+
+      # Clean up temporary script
+      rm -f "$RPM_POSTUN_SCRIPT" "$RPM_PREINST_SCRIPT"
     fi
-    
-    # Mark LICENSE file as a config file so it's preserved on uninstall
-    # This allows the LICENSE to remain even when this package is removed,
-    # since it's shared between multiple KrankyBear packages
-    RPM_ARGS+=(--config-files "/opt/local/bin/Resources/LICENSE")
-    echo "  Note: LICENSE file will be preserved on uninstall (marked as config file)"
-    
-    fpm \
-      "${RPM_ARGS[@]}" \
-      --package "$RPM_OUTFILE" \
-      "$SRC_BIN=/opt/local/bin/filemover" \
-      "$SRC_SYMLINK=/opt/local/bin/filemover" \
-      "$SRC_IMAGES=/opt/local/bin/Resources/Images" \
-      "$SRC_SOUNDS=/opt/local/bin/Resources/Sounds" \
-      "$SRC_RELEASE_NOTES_STAGED=/opt/local/bin/Resources/ReleaseNotes-filemover.txt" \
-      "$SRC_LICENSE_STAGED=/opt/local/bin/Resources/LICENSE"
-    
+
     echo ""
     echo "Done. Packages created:"
     echo "  $DEB_OUTFILE"
-    echo "  $RPM_OUTFILE"
+    if [[ "$(uname -s)" != "Darwin" ]]
+    then
+      echo "  $RPM_OUTFILE"
+    fi
+    echo ""
+    echo "Install with:"
+    echo "  apt install ./$DEB_OUTFILE"
+    echo "  # or"
+    echo "  dpkg -i ./$DEB_OUTFILE"
+    echo ""
+    echo "Application installed to: /opt/${KB_OPT_DIR}/ (locale packs under assets/i18n/ when packaged)"
   fi
 }
 
-# Check for fpm before starting
-if ! command -v fpm >/dev/null 2>&1
+# fpm required for Linux packages and macOS .pkg (osxpkg)
+if [[ "$TYPE_ARG" == "linux" || "$TYPE_ARG" == "all" || "$TYPE_ARG" == "mac" ]]
 then
-  echo "Error: fpm not found. Install with: gem install fpm" >&2
-  exit 1
+  if ! command -v fpm >/dev/null 2>&1
+  then
+    echo "Error: fpm not found. Install with: gem install fpm" >&2
+    exit 1
+  fi
 fi
+
+# Pre-flight validation for fpm file mappings (Bash 3.x compatible)
+# Detects: circular symlinks, duplicate destinations, symlinks overwriting files
+validate_fpm_files() {
+  local src dest target mapping
+  local seen_dests=""
+  local seen_srcs=""
+  
+  for mapping in "$@"
+  do
+    src="${mapping%%=*}"
+    dest="${mapping#*=}"
+    
+    # Check for circular/broken symlinks
+    if [[ -L "$src" ]]
+    then
+      target=$(readlink "$src" 2>/dev/null || echo "")
+      if [[ -z "$target" ]] || [[ "$target" == "$(basename "$src")" ]]
+      then
+        echo "Error: Circular or broken symlink detected: $src" >&2
+        echo "  This will cause fpm to fail with 'destination is a directory' error." >&2
+        return 1
+      fi
+      # Check if symlink target exists
+      if [[ ! -e "$src" ]]
+      then
+        echo "Error: Symlink target does not exist: $src -> $target" >&2
+        return 1
+      fi
+    fi
+    
+    # Check for duplicate destinations (Bash 3.x compatible using string matching)
+    # Use newline-delimited string for tracking seen destinations
+    if echo "$seen_dests" | grep -qxF "$dest"
+    then
+      # Find the original source for this destination
+      local orig_src=""
+      local check_mapping check_dest
+      for check_mapping in "$@"
+      do
+        check_dest="${check_mapping#*=}"
+        if [[ "$check_dest" == "$dest" ]]
+        then
+          orig_src="${check_mapping%%=*}"
+          break
+        fi
+      done
+      echo "Error: Duplicate destination detected: $dest" >&2
+      echo "  First source: $orig_src" >&2
+      echo "  Second source: $src" >&2
+      echo "  This will cause fpm to fail with 'destination is a directory' error." >&2
+      return 1
+    fi
+    seen_dests="$seen_dests
+$dest"
+    seen_srcs="$seen_srcs
+$src"
+    
+    # Check source exists (for non-symlinks)
+    if [[ ! -e "$src" ]] && [[ ! -L "$src" ]]
+    then
+      echo "Error: Source file does not exist: $src" >&2
+      return 1
+    fi
+  done
+  
+  return 0
+}
 
 # Build packages based on TYPE_ARG
 case "$TYPE_ARG" in

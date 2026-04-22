@@ -1,6 +1,6 @@
 # KrankyBear FileMover
 
-A cross-platform dual-pane file transfer application built with Go and the Fyne GUI library. Similar to WinSCP or FileZilla, this application provides an intuitive interface for transferring files between local and remote systems using SSH (SFTP/SCP) and SMB/CIFS protocols.
+A cross-platform dual-pane file transfer application built with Go and the Fyne GUI library. Similar to WinSCP or FileZilla, this application provides an intuitive interface for transferring files between local and remote systems using SSH (SFTP/SCP), SMB/CIFS, **rsync**, and an optional **LAN file agent** (TLS + pre-shared key, no SSH or share required).
 
 ## Features
 
@@ -9,7 +9,9 @@ A cross-platform dual-pane file transfer application built with Go and the Fyne 
 - **Dual-Pane Interface**: Side-by-side file browsers for easy file transfer between local and remote locations
 - **Multiple Protocol Support**:
   - **SFTP/SCP**: Secure file transfer over SSH
-  - **SMB/CIFS**: Windows file sharing and network drives
+  - **SMB/CIFS**: Windows file sharing and network drives (with automatic detection of already-mounted shares)
+  - **Rsync**: File synchronization with support for local and remote paths (optional SSH extra arguments, e.g. `ProxyJump`)
+  - **LAN file agent**: Foreground CLI mode on the “receiver” machine; the GUI connects with TLS, a **pre-shared key**, and a **certificate pin**—useful when SSH or SMB is impractical (still requires a network path, e.g. LAN)
   - **Local File System**: Browse and manage local files
 - **Secure Credential Storage**: 
   - Password-protected encrypted database (AES-256)
@@ -24,14 +26,27 @@ A cross-platform dual-pane file transfer application built with Go and the Fyne 
 ### User Interface
 
 - **Modern Fyne GUI**: Cross-platform native look and feel
+- **System Tray Integration**: 
+  - App icon in system tray (macOS/Linux/Windows)
+  - Quick access menu from system tray
+  - Show/Hide window functionality
+  - Access to all menu options from system tray
 - **File Browser Features**:
   - Directory navigation with up button and path entry
   - File listing with size, date, and directory indicators
   - Click directories to navigate, select files to transfer
+- **Theme Support**: 
+  - Light, Dark, and Default themes
+  - Theme preference persists across sessions
+  - Accessible from Settings menu
 - **Transfer Operations**:
   - One-click file transfer between panes
   - Visual transfer progress (basic implementation)
   - Automatic refresh after transfers
+  - **Rsync Synchronization**: Three sync modes available when rsync connections are active:
+    - Sync Left→Right: Synchronize from left panel to right panel
+    - Sync Right→Left: Synchronize from right panel to left panel
+    - Bidirectional Sync: Synchronize changes from both panels
 
 ### Cross-Platform Support
 
@@ -92,20 +107,85 @@ sudo dnf install -y alsa-lib mesa-libGL libX11
    - Click "New Connection" button
    - Fill in the connection details:
      - **Name**: A friendly name for this connection
-     - **Type**: Choose SFTP, SCP, or SMB
-     - **Host**: IP address or hostname
-     - **Port**: Default ports (22 for SSH, 445 for SMB)
-     - **Username**: Your username
-     - **Password**: Your password (optional if using SSH key)
-     - **SSH Key Path**: Path to your SSH private key (optional)
-     - **Key Passphrase**: Passphrase for your SSH key (if encrypted)
+     - **Type**: Choose SFTP, SCP, SMB, Rsync, or **fileagent** (LAN agent client)
+     - **Host**: IP address or hostname (required for SFTP/SCP/SMB/**fileagent**, optional for some rsync local paths)
+     - **Port**: Default ports (22 for SSH, 445 for SMB, **9742** suggested for file agent)
+     - **Username**: Your username (not used for **fileagent**)
+     - **Password**: Your password, or for **fileagent** the **pre-shared key** matching the receiver’s agent
+     - **SSH Key Path**: Path to your SSH private key (optional, hidden for SMB/rsync/**fileagent**)
+     - **Key Passphrase**: Passphrase for your SSH key (if encrypted, hidden for SMB/rsync/**fileagent**)
      - **Remote Path**: Initial directory to connect to
-   - Click "Save"
+       - For rsync: Can be a local path (e.g., `/path/to/dir` or `~/Documents`) or remote path format (`user@host:/path`)
+       - For **fileagent**: Path is **relative to `-file-agent-root` on the receiver**, not the host’s absolute filesystem unless the root is `/`. Use **`/`** for the share root, or **`/subfolder`** for a folder inside the share (see LAN file agent section below)
+     - **TLS certificate pin** (**fileagent** only): 64-character SHA-256 hex fingerprint printed when the receiver starts `filemover -file-agent ...` (new fingerprint every agent run)
+     - **Copy receiver command…** (**fileagent** only): Builds a paste-ready CLI for the **other** machine, with optional TTL and whether to embed the PSK in the command
+   - Press **Esc** or click "Cancel" to close without saving
+   - Click "Save" to store the connection
+
+### LAN file agent (receiver + sender)
+
+This is **not** a background service: someone runs the agent in a terminal on the machine that **exposes** files, and stops it with **Ctrl+C** (or when **`-file-agent-ttl`** expires).
+
+**Scope:** The agent is aimed at machines on the **same typical home or office LAN** (one local segment). It is **not** designed for crossing **routed VLANs**, **NAT/port-forward** lab setups, or paths where you would usually rely on **SSH port mapping**—use **SFTP**, **SCP**, or **SMB** in FileMover for those instead.
+
+**Headless mode:** Pass **`-file-agent`**, or any other **`-file-agent-*`** flag (e.g. **`-file-agent-listen`**, **`-file-agent-root`**) on the command line—that alone selects the TLS listener without the GUI. With no **`-file-agent*`** arguments, the graphical app starts and needs **`DISPLAY`** (over SSH without X11 you will see GLFW errors).
+
+**1. Receiver (share files)—examples:**
+
+```bash
+# Share current directory on port 9742; generate and print a random pre-shared key + TLS fingerprint
+filemover -file-agent -file-agent-listen :9742 -file-agent-root .
+
+# Same with a fixed key you will type into the GUI connection profile (Password field)
+filemover -file-agent -file-agent-listen :9742 -file-agent-root "$HOME/Public" \
+  -file-agent-psk 'use-a-long-random-secret'
+
+# Bind to one interface IP; stop automatically after 45 minutes
+filemover -file-agent -file-agent-listen 192.168.1.10:9742 -file-agent-root . \
+  -file-agent-ttl 45m
+
+# Allow non–private-IP clients (use with care; default is LAN-only)
+filemover -file-agent -file-agent-listen :9742 -file-agent-root . -file-agent-lan-only=false
+```
+
+Copy the **TLS fingerprint** into the connection’s **TLS certificate pin** field. If you omit **`-file-agent-psk`**, copy the **generated** key into the profile’s **Password** (pre-shared key) field.
+
+**2. Sender:** Create a connection of type **fileagent** with the receiver’s **Host**, **Port**, **Password** (PSK), **pin**, and **Remote path**.
+
+**Remote path (important):** The GUI path is **virtual** and is always resolved **under** the receiver’s **`-file-agent-root`**. **`/`** is the shared directory. A value like **`/home/allan`** means the path `home/allan` *inside* that share (e.g. `…/KrankyBearFileMover/home/allan` if the agent was started in the project tree)—**not** the Linux home directory. To expose `/home/allan` on the receiver, run the agent with **`-file-agent-root /home/allan`** and set Remote path to **`/`** (or a subfolder only). No need to run as **root**; pick a root directory you can read.
+
+On **Windows**, if the agent’s root is a whole drive (e.g. **`-file-agent-root C:\`**), use virtual **`/`** in the profile and path bar—not **`C:\`**, which would incorrectly mean a `C:` folder inside the share. **`C:\`** / **`C:`** typed in the path bar are treated as the share root for convenience.
+
+**3. In-app helper:** With a **fileagent** profile open, use **Copy receiver command…** to generate a command using this app’s executable path and your port (edit share directory, optional **TTL**, LAN-only, and whether to include the PSK in the copied string).
+
+**4. Firewall and network path:** The sender must reach the receiver’s TCP port (default **9742**) like any other service. **Host firewalls often allow SSH (22) or web ports but block everything else** until you add a rule—so “SSH works, file agent times out” usually means **9742/tcp is not allowed yet**.
+
+- **Ubuntu/Debian (`ufw`)**: e.g. `sudo ufw allow 9742/tcp` or, tighter, `sudo ufw allow from 192.168.0.0/16 to any port 9742 proto tcp` (adjust the subnet). Check `sudo ufw status verbose`.
+- **Windows**: Create an **inbound** rule allowing **TCP 9742** (or the specific executable) for **Private** networks while the agent runs; Windows Firewall blocks unexpected listeners by default. Release **`.exe`** builds use **`-H windowsgui`**, so there is no console unless you launch from **cmd/PowerShell** with **`-h`**, **`--help`**, **`/?`**, or any **`-file-agent*`** flag—the binary then attaches to that terminal for output. Alternatively use **Tools → Run LAN file agent on this computer…** in the GUI (log, PSK, and TLS pin appear in that window).
+- **macOS**: If **Firewall** is enabled in System Settings, allow incoming connections for the app (or Terminal, if you start `-file-agent` from there).
+- **Listen address**: Use **`-file-agent-listen :9742`** so the process listens on all interfaces. **`127.0.0.1:9742`** only accepts local connections; another machine will see **connection timed out**.
+- **VMs (e.g. Proxmox)**: Bridged networking is usually enough once the **guest OS** allows the port; the hypervisor VLAN is separate from **ufw/iptables** inside the VM.
+
+**5. Troubleshooting “connection timed out” (TCP, before TLS):** The certificate pin and PSK are checked only **after** TCP connects. If the GUI reports a TCP timeout, fix reachability first.
+
+1. On the **receiver**: `ss -tlnp | grep 9742` — you want `0.0.0.0:9742` or `*:9742`, not only `127.0.0.1:9742`.
+2. On the **receiver**, from itself: `nc -vz 127.0.0.1 9742` and `nc -vz $(hostname -I | awk '{print $1}') 9742` should succeed.
+3. From the **sender**: `nc -vz <receiver-ip> 9742` — this must succeed before FileMover can connect.
+4. **Ping** may fail while **TCP** works (ICMP blocked by the same firewall policy); use **`nc`** as the truth test for file agent.
+5. If **`nc`** still times out but you see inbound SYNs on the receiver (`sudo tcpdump -n -i any 'tcp port 9742'`), repeated **SYN with no SYN-ACK** usually means the **receiver’s firewall** is dropping the connection—add the allow rule for **9742/tcp**.
+6. **Application debug:** From a terminal, run the GUI with **`FILEMOVER_FILEAGENT_DEBUG=1`** to print TCP/TLS steps on stderr; use the same variable on the receiver agent to log accepts and LAN-only rejects.
+
+**Typical use case:** The LAN file agent helps when **SSH or SMB is unavailable**, **removable media is restricted**, or **approved cloud sync is impractical**—for example moving data between two Macs on the same network. You still need a permitted network path and compliant use under your organization’s policies.
+
+**Future:** TOTP / authenticator support on top of the same protocol may be added later.
 
 3. **Connect**:
    - Select a connection from the list
    - Click "Connect Left" or "Connect Right" to connect to that pane
-   - The file browser will update to show the remote directory
+   - Connection attempts have a configurable timeout (default 10 seconds)
+   - If connection fails or times out, an error dialog will appear and the panel will reset to local filesystem
+   - The file browser will update to show the remote directory upon successful connection
+   - **SMB Note**: If an SMB share is already mounted on your system, it will be automatically detected and used
 
 4. **Transfer Files**:
    - Navigate to the file you want to transfer
@@ -113,9 +193,16 @@ sudo dnf install -y alsa-lib mesa-libGL libX11
    - Click "→ Transfer" to copy from left to right, or "← Transfer" to copy from right to left
    - The file will be transferred to the current directory in the destination pane
 
+5. **Synchronize with Rsync** (when rsync connection is active):
+   - Sync buttons appear in the second toolbar row when an rsync connection is established
+   - **Sync Left→Right**: Synchronizes all files from left panel to right panel
+   - **Sync Right→Left**: Synchronizes all files from right panel to left panel
+   - **Bidirectional Sync**: Synchronizes changes from both panels (left→right, then right→left)
+   - Uses rsync with archive mode (`-av`) and delete option (`--delete`) to keep directories in sync
+
 ### Managing Connections
 
-- **Edit Connection**: Select a connection and click "Edit Connection"
+- **Edit Connection**: Select a connection and click "Edit Connection" (requires master password)
 - **Delete Connection**: Select a connection and click "Delete Connection"
 - **Refresh List**: Click "Refresh" to reload connections from the database
 
@@ -123,6 +210,26 @@ sudo dnf install -y alsa-lib mesa-libGL libX11
 
 - Click "Disconnect Left" or "Disconnect Right" to disconnect from a remote server
 - The pane will revert to showing the local file system
+
+### Settings Menu
+
+- **Theme Settings**: Change between Light, Dark, and Default themes
+- **Change Master Password**: Update your master password (re-encrypts all stored credentials)
+- **Remove ALL Settings**: Delete all stored connections and reset the application (requires confirmation)
+- **Debug Mode**: Toggle verbose debug logging to file (useful for troubleshooting connection issues)
+- **View Debug Log**: View the debug log file in a scrollable window with option to open in system default editor
+
+### Debug Mode
+
+When troubleshooting connection issues (especially SSH key or password problems), you can enable debug mode:
+
+1. Go to **Settings → Debug Mode** to enable/disable debug logging
+2. When enabled, all connection attempts, authentication steps, and errors are logged to `~/.filemover/debug.log`
+3. Use **Settings → View Debug Log** to view the log file within the application
+4. Click "Open Log File" to open it in your system's default text editor
+5. Debug mode persists across application restarts
+
+**Note**: Debug logs may contain sensitive information. Keep the log file secure and delete it when no longer needed.
 
 ## Server Configuration
 
@@ -415,7 +522,8 @@ Or use the GUI:
 ### Protocol Support
 
 - **SFTP/SCP**: Implemented using `golang.org/x/crypto/ssh` and `github.com/pkg/sftp`
-- **SMB/CIFS**: Implemented using `github.com/hirochachacha/go-smb2`
+- **SMB/CIFS**: Implemented using `github.com/hirochachacha/go-smb2` with automatic detection of mounted shares
+- **Rsync**: Uses system `rsync` command-line tool with SSH support for remote paths
 - **Local**: Native Go `os` package for local file operations
 
 ## Dependencies
@@ -433,8 +541,10 @@ Or use the GUI:
 - File permissions may not be preserved during transfer
 - SSH host key verification uses insecure mode (should be configured for production)
 - SMB share discovery not implemented (must specify share name)
+- Rsync requires the `rsync` command-line tool to be installed and available in PATH
+- Connection timeout is configurable via preferences but defaults to 10 seconds
 
-## Future Enhancements
+## Possible Future Enhancements
 
 - [ ] Detailed transfer progress with speed and ETA
 - [ ] Directory transfer support
@@ -442,9 +552,11 @@ Or use the GUI:
 - [ ] SSH host key management and verification
 - [ ] SMB share discovery
 - [ ] Drag-and-drop file transfer
-- [ ] File synchronization features
 - [ ] Transfer queue management
 - [ ] Connection favorites/quick connect
+- [x] Configurable connection timeout via UI
+- [x] File synchronization features (rsync support implemented)
+- [x] Configurable panel colors
 
 ## Troubleshooting
 
@@ -452,7 +564,15 @@ Or use the GUI:
 
 - **SFTP/SCP**: Ensure SSH is enabled on the remote server and the port is correct (default 22)
 - **SMB**: Ensure SMB is enabled and the share name is correct (common shares: C$, D$, Public)
+- **Rsync**: Ensure `rsync` is installed and available in your PATH. For remote paths, ensure SSH access is configured.
 - **Firewall**: Check that the required ports are open (22 for SSH, 445 for SMB)
+- **Connection Timeout**: If connections timeout, check network connectivity and firewall settings. Enable debug mode to see detailed connection logs.
+- **SSH Key Authentication**: If SSH key authentication fails, enable debug mode to see detailed error messages. Common issues:
+  - Incorrect key file path (use `~` for home directory, e.g., `~/.ssh/id_rsa`)
+  - Wrong passphrase for encrypted keys
+  - Key file permissions too open (should be 600)
+  - Key format not supported
+- **Password Authentication**: If password authentication fails, verify the password is correct. Enable debug mode to see if the connection is reaching the authentication step.
 
 ### Database Issues
 

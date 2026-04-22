@@ -12,6 +12,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	_ "github.com/mattn/go-sqlite3"
 	"golang.org/x/crypto/pbkdf2"
@@ -35,6 +36,12 @@ type Connection struct {
 	SSHKeyPath    string
 	KeyPassphrase string // encrypted
 	RemotePath    string
+	// RemoteRsyncPath is passed to rsync as --rsync-path when non-empty (e.g. Cygwin: C:/cygwin64/bin/rsync.exe).
+	RemoteRsyncPath string
+	// SSHExtraArgs are appended to the ssh invoked by rsync (-e), e.g. -J user@jump or -o ProxyCommand=...
+	SSHExtraArgs string
+	// FileAgentTLSPin is the expected SHA-256 hex fingerprint of the agent's TLS certificate (type fileagent).
+	FileAgentTLSPin string
 }
 
 type Database struct {
@@ -91,6 +98,9 @@ func (d *Database) initTables() error {
 		ssh_key_path TEXT,
 		key_passphrase_encrypted TEXT,
 		remote_path TEXT,
+		remote_rsync_path TEXT,
+		ssh_extra_args TEXT,
+		fileagent_tls_pin_encrypted TEXT,
 		created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
 	)
@@ -111,7 +121,11 @@ func (d *Database) initTables() error {
 	if err != nil {
 		return err
 	}
-	
+
+	if err := d.migrateConnectionsSchema(); err != nil {
+		return err
+	}
+
 	// Store a verification token if it doesn't exist
 	var count int
 	err = d.db.QueryRow("SELECT COUNT(*) FROM metadata WHERE key = 'password_verification'").Scan(&count)
@@ -125,6 +139,22 @@ func (d *Database) initTables() error {
 		}
 	}
 	
+	return nil
+}
+
+func (d *Database) migrateConnectionsSchema() error {
+	for _, stmt := range []string{
+		`ALTER TABLE connections ADD COLUMN remote_rsync_path TEXT`,
+		`ALTER TABLE connections ADD COLUMN ssh_extra_args TEXT`,
+		`ALTER TABLE connections ADD COLUMN fileagent_tls_pin_encrypted TEXT`,
+	} {
+		if _, err := d.db.Exec(stmt); err != nil {
+			low := strings.ToLower(err.Error())
+			if !strings.Contains(low, "duplicate column") {
+				return err
+			}
+		}
+	}
 	return nil
 }
 
@@ -197,14 +227,19 @@ func (d *Database) SaveConnection(conn *Connection) error {
 		return fmt.Errorf("failed to encrypt passphrase: %w", err)
 	}
 
+	encryptedPIN, err := d.encrypt(conn.FileAgentTLSPin)
+	if err != nil {
+		return fmt.Errorf("failed to encrypt file agent TLS pin: %w", err)
+	}
+
 	if conn.ID == 0 {
 		// Insert new connection
 		query := `
-		INSERT INTO connections (name, type, host, port, username, password_encrypted, ssh_key_path, key_passphrase_encrypted, remote_path)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		INSERT INTO connections (name, type, host, port, username, password_encrypted, ssh_key_path, key_passphrase_encrypted, remote_path, remote_rsync_path, ssh_extra_args, fileagent_tls_pin_encrypted)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		`
 		result, err := d.db.Exec(query, conn.Name, conn.Type, conn.Host, conn.Port, conn.Username,
-			encryptedPassword, conn.SSHKeyPath, encryptedPassphrase, conn.RemotePath)
+			encryptedPassword, conn.SSHKeyPath, encryptedPassphrase, conn.RemotePath, conn.RemoteRsyncPath, conn.SSHExtraArgs, encryptedPIN)
 		if err != nil {
 			return err
 		}
@@ -214,11 +249,11 @@ func (d *Database) SaveConnection(conn *Connection) error {
 		query := `
 		UPDATE connections 
 		SET name = ?, type = ?, host = ?, port = ?, username = ?, password_encrypted = ?, 
-		    ssh_key_path = ?, key_passphrase_encrypted = ?, remote_path = ?, updated_at = CURRENT_TIMESTAMP
+		    ssh_key_path = ?, key_passphrase_encrypted = ?, remote_path = ?, remote_rsync_path = ?, ssh_extra_args = ?, fileagent_tls_pin_encrypted = ?, updated_at = CURRENT_TIMESTAMP
 		WHERE id = ?
 		`
 		_, err := d.db.Exec(query, conn.Name, conn.Type, conn.Host, conn.Port, conn.Username,
-			encryptedPassword, conn.SSHKeyPath, encryptedPassphrase, conn.RemotePath, conn.ID)
+			encryptedPassword, conn.SSHKeyPath, encryptedPassphrase, conn.RemotePath, conn.RemoteRsyncPath, conn.SSHExtraArgs, encryptedPIN, conn.ID)
 		if err != nil {
 			return err
 		}
@@ -228,7 +263,7 @@ func (d *Database) SaveConnection(conn *Connection) error {
 }
 
 func (d *Database) GetConnections() ([]*Connection, error) {
-	query := `SELECT id, name, type, host, port, username, password_encrypted, ssh_key_path, key_passphrase_encrypted, remote_path FROM connections ORDER BY name`
+	query := `SELECT id, name, type, host, port, username, password_encrypted, ssh_key_path, key_passphrase_encrypted, remote_path, IFNULL(remote_rsync_path, ''), IFNULL(ssh_extra_args, ''), IFNULL(fileagent_tls_pin_encrypted, '') FROM connections ORDER BY name`
 	rows, err := d.db.Query(query)
 	if err != nil {
 		return nil, err
@@ -240,14 +275,16 @@ func (d *Database) GetConnections() ([]*Connection, error) {
 		conn := &Connection{}
 		var encryptedPassword, encryptedPassphrase string
 
+		var encryptedFileAgentPIN string
 		err := rows.Scan(&conn.ID, &conn.Name, &conn.Type, &conn.Host, &conn.Port, &conn.Username,
-			&encryptedPassword, &conn.SSHKeyPath, &encryptedPassphrase, &conn.RemotePath)
+			&encryptedPassword, &conn.SSHKeyPath, &encryptedPassphrase, &conn.RemotePath, &conn.RemoteRsyncPath, &conn.SSHExtraArgs, &encryptedFileAgentPIN)
 		if err != nil {
 			continue
 		}
 
 		conn.Password, _ = d.decrypt(encryptedPassword)
 		conn.KeyPassphrase, _ = d.decrypt(encryptedPassphrase)
+		conn.FileAgentTLSPin, _ = d.decrypt(encryptedFileAgentPIN)
 		connections = append(connections, conn)
 	}
 
@@ -255,20 +292,22 @@ func (d *Database) GetConnections() ([]*Connection, error) {
 }
 
 func (d *Database) GetConnection(id int64) (*Connection, error) {
-	query := `SELECT id, name, type, host, port, username, password_encrypted, ssh_key_path, key_passphrase_encrypted, remote_path FROM connections WHERE id = ?`
+	query := `SELECT id, name, type, host, port, username, password_encrypted, ssh_key_path, key_passphrase_encrypted, remote_path, IFNULL(remote_rsync_path, ''), IFNULL(ssh_extra_args, ''), IFNULL(fileagent_tls_pin_encrypted, '') FROM connections WHERE id = ?`
 	row := d.db.QueryRow(query, id)
 
 	conn := &Connection{}
 	var encryptedPassword, encryptedPassphrase string
 
+	var encryptedFileAgentPIN string
 	err := row.Scan(&conn.ID, &conn.Name, &conn.Type, &conn.Host, &conn.Port, &conn.Username,
-		&encryptedPassword, &conn.SSHKeyPath, &encryptedPassphrase, &conn.RemotePath)
+		&encryptedPassword, &conn.SSHKeyPath, &encryptedPassphrase, &conn.RemotePath, &conn.RemoteRsyncPath, &conn.SSHExtraArgs, &encryptedFileAgentPIN)
 	if err != nil {
 		return nil, err
 	}
 
 	conn.Password, _ = d.decrypt(encryptedPassword)
 	conn.KeyPassphrase, _ = d.decrypt(encryptedPassphrase)
+	conn.FileAgentTLSPin, _ = d.decrypt(encryptedFileAgentPIN)
 
 	return conn, nil
 }

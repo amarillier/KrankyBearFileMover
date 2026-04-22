@@ -25,19 +25,20 @@ git.sh
 latestcheck.json
 
 ## Build artifacts
-bin/.DS_Store
-Resources/.DS_Store
+bin/*
+installers/*
 dist/
 build/
-KrankyBearFileMover.app/
 vendor/*
 sync*.sh
 compile-all.sh
 compile-windows-ssh.sh
+rsrc_windows_amd64.syso
 
+# NOT ALLOWED
+bin/*
+installers/*
 # ALLOWED
-!bin/*
-!installers/*
-!Resources/*
+!assets/*
 !Inno/*
-
+!winres/*

@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 
 # prepare-deps.sh - Prepare Go dependencies for KrankyBear FileMover
-# This script downloads all required packages, tidies the module, and creates a vendor directory
-# for efficient first-time compilation.
+# This script downloads modules into the Go module cache and tidies go.mod (no ./vendor).
 
 set -euo pipefail
 
@@ -69,16 +68,6 @@ else
 fi
 echo ""
 
-echo -e "${YELLOW}Step 4:${NC} Creating vendor directory..."
-echo "Running: go mod vendor"
-if go mod vendor; then
-    echo -e "${GREEN}✓${NC} Vendor directory created successfully"
-else
-    echo -e "${RED}✗${NC} Failed to create vendor directory"
-    exit 1
-fi
-echo ""
-
 # Count dependencies (handle errors gracefully)
 # Count direct dependencies (lines with require that don't have // indirect)
 DIRECT_DEPS=$(grep -E "^require " go.mod 2>/dev/null | grep -v "// indirect" | wc -l | tr -d ' ' || echo "0")
@@ -86,11 +75,7 @@ DIRECT_DEPS=$(grep -E "^require " go.mod 2>/dev/null | grep -v "// indirect" | w
 DIRECT_IN_BLOCK=$(awk '/^require \(/,/^\)/ {if ($0 !~ /\/\/ indirect/ && $0 !~ /^require/ && $0 !~ /^\)/ && NF > 0) count++} END {print count+0}' go.mod 2>/dev/null || echo "0")
 DIRECT_DEPS=$((DIRECT_DEPS + DIRECT_IN_BLOCK))
 INDIRECT_DEPS=$(grep -c "// indirect" go.mod 2>/dev/null || echo "0")
-if [ -d "vendor" ]; then
-    VENDOR_COUNT=$(find vendor -type d -name ".*" -prune -o -type d -print 2>/dev/null | wc -l | tr -d ' ' || echo "0")
-else
-    VENDOR_COUNT="0"
-fi
+GOMODCACHE=$(go env GOMODCACHE 2>/dev/null || echo "")
 
 echo -e "${BLUE}========================================${NC}"
 echo -e "${GREEN}Dependency Setup Complete!${NC}"
@@ -99,12 +84,12 @@ echo ""
 echo "Summary:"
 echo "  • Direct dependencies: ${DIRECT_DEPS}"
 echo "  • Indirect dependencies: ${INDIRECT_DEPS}"
-echo "  • Vendor packages: ${VENDOR_COUNT}"
+echo "  • Module cache: ${GOMODCACHE:-<unset>}"
 echo ""
 echo -e "${GREEN}You can now build the application with:${NC}"
 echo "  make build"
 echo "  or"
-echo "  go build -mod=vendor -o filemover"
+echo "  go build -o filemover"
 echo ""
 
 # "Now this is not the end. It is not even the beginning of the end. But it is, perhaps, the end of the beginning." Winston Churchill, November 10, 1942

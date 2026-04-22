@@ -2,10 +2,10 @@
 ; SEE THE DOCUMENTATION FOR DETAILS ON CREATING INNO SETUP SCRIPT FILES!
 
 #define MyAppName "KrankyBearFileMover"
-#define MyAppVersion "0.1.0"
+#define MyAppVersion "0.2.0"
 #define MyAppPublisher "Allan Marillier, 2025-"
 #define MyAppURL "https://github.com/amarillier/KrankyBearFileMover"
-#define MyAppExeName "filemover-windows.exe"
+#define MyAppExeName "KrankyBearFileMover.exe"
 #define MyAppAssocName MyAppName + ""
 #define MyAppAssocExt ".exe"
 #define MyAppAssocKey StringChange(MyAppAssocName, " ", "") + MyAppAssocExt
@@ -36,7 +36,7 @@ LicenseFile=..\LICENSE
 PrivilegesRequiredOverridesAllowed=dialog
 OutputDir=..\installers
 OutputBaseFilename=KrankyBearFileMoverSetup_{#MyAppVersion}
-SetupIconFile=..\Resources\Images\KrankyBearCowboyBrown.ico
+SetupIconFile=..\assets\images\KrankyBearCowboyBrown.ico
 Compression=lzma
 SolidCompression=yes
 WizardStyle=modern
@@ -50,9 +50,9 @@ Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{
 Name: "startup"; Description: "Automatically start on login (or enable later via settings)"; GroupDescription: "{cm:AdditionalIcons}"; Flags: unchecked
 
 [Files]
-Source: "..\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
-Source: "..\Resources\*"; DestDir: "{app}\Resources"; Flags: ignoreversion recursesubdirs createallsubdirs
-; NOTE: Don't use "Flags: ignoreversion" on any shared system files
+Source: "..\bin\{#MyAppExeName}"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\assets\images\KrankyBearCowboyBrown.ico"; DestDir: "{app}"; Flags: ignoreversion
+Source: "..\assets\*"; DestDir: "{app}\assets"; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "..\ReleaseNotes.txt"; DestDir: "{app}"; Flags: isreadme
 
 [Registry]

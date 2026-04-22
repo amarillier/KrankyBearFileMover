@@ -2,8 +2,8 @@
   "RT_GROUP_ICON": {
     "APP": {
       "0000": [
-        "../Resources/Images/KrankyBearCowboyBrown.png",
-        "../Resources/Images/KrankyBearCowboyBrown.png"
+        "../assets/images/KrankyBearCowboyBrown.png",
+        "../assets/images/KrankyBearCowboyBrown.png"
       ]
     }
   },
@@ -44,14 +44,14 @@
             "Comments": "",
             "CompanyName": "Allan Marillier",
             "FileDescription": "KrankyBearFileMover",
-            "FileVersion": "0.1.0",
+            "FileVersion": "0.2.0",
             "InternalName": "",
             "LegalCopyright": "Allan Marillier, 2025-",
             "LegalTrademarks": "",
             "OriginalFilename": "",
             "PrivateBuild": "",
             "ProductName": "KrankyBearFileMover",
-            "ProductVersion": "0.1.0",
+            "ProductVersion": "0.2.0",
             "SpecialBuild": ""
           }
         }

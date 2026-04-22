@@ -10,9 +10,9 @@
 	<key>CFBundleIdentifier</key>
 	<string>com.github.amarillier.KrankyBearFileMover</string>
 	<key>CFBundleIconFile</key>
-	<string>icon.icns</string>
+	<string>KrankyBearCowboyBrown.icns</string>
 	<key>CFBundleShortVersionString</key>
-	<string>0.1.0</string>
+	<string>0.2.0</string>
 	<key>CFBundleSupportedPlatforms</key>
 	<array>
 		<string>MacOSX</string>
