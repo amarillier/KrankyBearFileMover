@@ -30,10 +30,14 @@ installers/*
 dist/
 build/
 vendor/*
+build*.sh
+build*.ps1
+compile*.sh
 sync*.sh
 compile-all.sh
 compile-windows-ssh.sh
 rsrc_windows_amd64.syso
+filemover
 
 # NOT ALLOWED
 bin/*
