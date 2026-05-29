@@ -1,6 +1,38 @@
-Release notes
+═══════════════════════════════════════════════════════════════════════════════
+KrankyBear FileMover - RELEASE NOTES
+═══════════════════════════════════════════════════════════════════════════════
+Future ideas:
+- 
 
-0.2.0
+Version 0.3.0 - May 29, 2026
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+🔒 SECURITY IMPROVEMENTS — proactive hardening
+▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔▔
+- Stronger key derivation: the master password now uses argon2id (64 MB, 3 passes,
+  4 lanes) instead of PBKDF2, with a random per-install salt stored inside the
+  database. This replaces the previous shared, hard-coded salt.
+- Full-field encryption at rest: every sensitive connection field is now encrypted
+  (name, host, username, SSH key path, key passphrase, remote and rsync paths, SSH
+  extra arguments, password, and the LAN file-agent TLS pin). Previously only the
+  password, key passphrase, and TLS pin were encrypted; host names, usernames and
+  jump-host arguments were stored in clear text.
+- Optional OS keychain: the master password can be cached in this computer's
+  operating-system keychain (macOS Keychain, Windows Credential Manager, Linux
+  Secret Service) so you are not prompted at every launch. Off by default; enable
+  it in Application Settings. The keychain only ever holds the master password.
+- Portable by design: the salt and encryption parameters travel inside the
+  database file. Copy the app and connections.db to another computer (which has no
+  keychain entry) and it simply prompts for the master password again.
+- Optional master password hint: set a hint that is shown after two failed login
+  attempts. Set or clear it from Change Master Password. The hint is stored
+  unencrypted, so do not put the password itself in it.
+- Automatic, transparent upgrade: databases created by earlier versions are
+  re-encrypted to the new scheme the first time you unlock them with the correct
+  password. No manual steps, and the AES-256-GCM cipher itself is unchanged.
+- No recovery by design: there is still no back door. A fresh computer with only
+  the database and no keychain entry will require the master password.
+
+Version 0.2.0 - April 22, 2026
 - LAN file agent (TLS 1.3 + PSK): headless mode (-file-agent / -file-agent-*), GUI window from Tools,
   receiver command helper, virtual paths under -file-agent-root, FILEMOVER_FILEAGENT_DEBUG diagnostics.
 - Intended for peers on the same local network segment (private/link-local). For routed subnets,
@@ -16,9 +48,10 @@ Release notes
 - Repo hygiene: removed unused assets/sounds and extra mascot images; packaging no longer expects sounds.
   Info-plist icon file name aligned with KrankyBearCowboyBrown.icns.
 
+Version 0.1.1 - November 15, 2025
 0.1.1 (not previously tagged; summarized here)
 - Improvements, color panel options, rsync-related work.
 
-0.1.0
+Version 0.1.0 - November 15, 2025
 - Initial check-in
 - Windows, Linux, and macOS builds

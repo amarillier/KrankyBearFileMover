@@ -223,8 +223,12 @@ install_dependencies
 # i18n merge + embedded_defaults sync: run on macOS (./compile-mac.sh or ./tools/i18n_sync_for_build.sh)
 # before rsync so Linux/Windows builds do not require a modern Python on those hosts.
 
-# fast update fyne before compile
-go get fyne.io/fyne/v2@latest # or a specific version like @v2.4.0
+# Use the committed, pinned dependency versions (go.mod/go.sum are rsync'd from the
+# build host, matching the macOS and Windows builds). Do NOT run "go get fyne@latest"
+# here: an unpinned upgrade (e.g. when Fyne publishes a new release) rewrites go.mod
+# without tidying go.sum, which breaks the build with "missing go.sum entry" errors.
+# Pre-download the pinned modules so the build is reproducible and offline-friendly.
+go mod download
 
 
 # Build for AMD64

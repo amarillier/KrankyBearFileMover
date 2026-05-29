@@ -35,38 +35,38 @@ import (
 )
 
 type App struct {
-	app                fyne.App
-	window             fyne.Window
-	db                 *Database
-	leftBrowser        *FileBrowser
-	rightBrowser       *FileBrowser
-	leftConn           ConnectionManager
-	rightConn          ConnectionManager
-	leftConnInfo       *Connection // Store connection info for rsync
-	rightConnInfo      *Connection // Store connection info for rsync
-	connections        []*Connection
+	app                  fyne.App
+	window               fyne.Window
+	db                   *Database
+	leftBrowser          *FileBrowser
+	rightBrowser         *FileBrowser
+	leftConn             ConnectionManager
+	rightConn            ConnectionManager
+	leftConnInfo         *Connection // Store connection info for rsync
+	rightConnInfo        *Connection // Store connection info for rsync
+	connections          []*Connection
 	selectedConnectionID int64 // 0 = none; SQLite IDs are always > 0
-	connectionPickLabel *widget.Label
-	settingsAuthExpiry  time.Time // master-password grace for settings/connection editors
-	leftSelectedFile   int
-	rightSelectedFile  int
-	helpWindow         fyne.Window
-	updateWindow       fyne.Window
-	openDialogs        map[string]fyne.Window
-	childWindows       []fyne.Window
-	toolbar            fyne.CanvasObject
-	syncToolbar        fyne.CanvasObject // Separate toolbar for sync/transfer buttons
-	systemTrayActive   bool
-	leftPanelColor     color.Color // Custom color for left panel
-	rightPanelColor    color.Color // Custom color for right panel
-	fileAgentStopMu    sync.Mutex
-	fileAgentStop      context.CancelFunc // non-nil while LAN file agent runs from Tools menu
-	passwordWindow     fyne.Window        // master-password prompt, if visible
+	connectionPickLabel  *widget.Label
+	settingsAuthExpiry   time.Time // master-password grace for settings/connection editors
+	leftSelectedFile     int
+	rightSelectedFile    int
+	helpWindow           fyne.Window
+	updateWindow         fyne.Window
+	openDialogs          map[string]fyne.Window
+	childWindows         []fyne.Window
+	toolbar              fyne.CanvasObject
+	syncToolbar          fyne.CanvasObject // Separate toolbar for sync/transfer buttons
+	systemTrayActive     bool
+	leftPanelColor       color.Color // Custom color for left panel
+	rightPanelColor      color.Color // Custom color for right panel
+	fileAgentStopMu      sync.Mutex
+	fileAgentStop        context.CancelFunc // non-nil while LAN file agent runs from Tools menu
+	passwordWindow       fyne.Window        // master-password prompt, if visible
 }
 
 const (
 	// appName    = "KrankyBear FileMover"
-	appVersion               = "0.2.0" // keep in sync with FyneApp.toml; bump with ./setver.sh
+	appVersion               = "0.3.0" // keep in sync with FyneApp.toml; bump with ./setver.sh
 	appAuthor                = "Allan Marillier"
 	defaultConnectionTimeout = 10 * time.Second // Default connection timeout
 	debugLogFileName         = "debug.log"
@@ -250,12 +250,12 @@ func NewApp() (*App, error) {
 	window.Resize(fyne.NewSize(1200, 800))
 
 	app := &App{
-		app:                myApp,
-		window:             window,
-		leftSelectedFile:   -1,
-		rightSelectedFile:  -1,
-		openDialogs:        make(map[string]fyne.Window),
-		childWindows:       []fyne.Window{},
+		app:               myApp,
+		window:            window,
+		leftSelectedFile:  -1,
+		rightSelectedFile: -1,
+		openDialogs:       make(map[string]fyne.Window),
+		childWindows:      []fyne.Window{},
 	}
 
 	// Set close intercept - always fully close the app when X is clicked
@@ -281,48 +281,79 @@ func NewApp() (*App, error) {
 }
 
 func (a *App) showPasswordDialog(parent fyne.Window) {
+	// Attempt a silent unlock from the OS keychain first (opt-in). If the cached
+	// password is missing/stale, fall through to prompting as normal.
+	if db := a.tryKeychainUnlock(); db != nil {
+		a.completeLogin(db, nil)
+		return
+	}
+
 	passwordEntry := widget.NewPasswordEntry()
 	passwordEntry.SetPlaceHolder("Enter master password")
 	passwordEntry.Resize(fyne.NewSize(300, passwordEntry.MinSize().Height))
 
+	// Hint label, revealed after repeated failed attempts if a hint was set.
+	hintLabel := widget.NewLabel("")
+	hintLabel.Wrapping = fyne.TextWrapWord
+	hintLabel.Hide()
+	failedAttempts := 0
+
+	// Track the current error dialog so each new attempt replaces the previous one
+	// (no stacking) and a successful login dismisses any lingering error.
+	var errDialog dialog.Dialog
+	dismissErrDialog := func() {
+		if errDialog != nil {
+			errDialog.Hide()
+			errDialog = nil
+		}
+	}
+	showErr := func(err error) {
+		dismissErrDialog()
+		errDialog = dialog.NewError(err, parent)
+		errDialog.Show()
+	}
+
 	// Create password dialog window first so we can reference it in callbacks
 	passwordDialogWindow := a.app.NewWindow("Enter Master Password")
-	passwordDialogWindow.Resize(fyne.NewSize(450, 200))
+	passwordDialogWindow.Resize(fyne.NewSize(450, 220))
 
 	submitPassword := func() {
 		masterPassword := passwordEntry.Text
 		if masterPassword == "" {
-			dialog.ShowError(fmt.Errorf("master password cannot be empty"), parent)
+			showErr(fmt.Errorf("master password cannot be empty"))
 			return
 		}
 
 		db, err := NewDatabase(masterPassword)
 		if err != nil {
-			dialog.ShowError(fmt.Errorf("failed to initialize database: %w", err), parent)
+			showErr(fmt.Errorf("failed to initialize database: %w", err))
 			return
 		}
 
 		// Verify the password is correct
 		if err := db.VerifyPassword(); err != nil {
 			db.Close()
-			dialog.ShowError(fmt.Errorf("invalid master password"), parent)
+			failedAttempts++
+			// After 2 failed attempts, surface the password hint if one was set.
+			if failedAttempts >= 2 {
+				if hint := ReadPasswordHint(); hint != "" {
+					hintLabel.SetText("Hint: " + hint)
+					hintLabel.Show()
+				}
+			}
+			showErr(fmt.Errorf("invalid master password"))
 			return
 		}
 
-		a.db = db
-		fyne.Do(func() {
-			a.passwordWindow = nil
-			passwordDialogWindow.Close()
-			a.setupUI()
-			// Setup system tray menu after UI is fully initialized
-			// Use a goroutine with delay to ensure window is fully ready
-			go func() {
-				time.Sleep(200 * time.Millisecond) // Delay to ensure window is fully shown and ready
-				fyne.Do(func() {
-					a.setupSystemTrayMenu()
-				})
-			}()
-		})
+		// Login succeeded: dismiss any lingering "invalid password" error.
+		dismissErrDialog()
+
+		// Refresh the keychain copy if the user has opted in to remembering it.
+		if a.app.Preferences().BoolWithFallback("remember_master_password", false) {
+			keychainSetMasterPassword(masterPassword)
+		}
+
+		a.completeLogin(db, passwordDialogWindow)
 	}
 
 	// Allow Enter key to submit
@@ -334,6 +365,7 @@ func (a *App) showPasswordDialog(parent fyne.Window) {
 	content := container.NewVBox(
 		widget.NewLabel("Master Password:"),
 		passwordEntry,
+		hintLabel,
 		container.NewHBox(
 			widget.NewButton("Submit", submitPassword),
 			widget.NewButton("Forgot Password", func() {
@@ -374,6 +406,53 @@ func (a *App) showPasswordDialog(parent fyne.Window) {
 			passwordDialogWindow.Canvas().Focus(passwordEntry)
 		})
 	}()
+}
+
+// tryKeychainUnlock attempts to open the database using a master password cached
+// in the OS keychain. It returns nil (so the caller prompts) when the feature is
+// disabled, no entry exists, or the cached password no longer works (in which
+// case the stale entry is removed).
+func (a *App) tryKeychainUnlock() *Database {
+	if !a.app.Preferences().BoolWithFallback("remember_master_password", false) {
+		return nil
+	}
+	pw, ok := keychainGetMasterPassword()
+	if !ok || pw == "" {
+		return nil
+	}
+
+	db, err := NewDatabase(pw)
+	if err != nil {
+		return nil
+	}
+	if err := db.VerifyPassword(); err != nil {
+		// Cached password is stale (e.g. changed elsewhere). Discard it.
+		db.Close()
+		keychainDeleteMasterPassword()
+		return nil
+	}
+	return db
+}
+
+// completeLogin installs the unlocked database and brings up the main UI. The
+// passwordDialogWindow may be nil when the unlock came from the keychain.
+func (a *App) completeLogin(db *Database, passwordDialogWindow fyne.Window) {
+	a.db = db
+	fyne.Do(func() {
+		a.passwordWindow = nil
+		if passwordDialogWindow != nil {
+			passwordDialogWindow.Close()
+		}
+		a.setupUI()
+		// Setup system tray menu after UI is fully initialized.
+		// Use a goroutine with delay to ensure window is fully ready.
+		go func() {
+			time.Sleep(200 * time.Millisecond) // Delay to ensure window is fully shown and ready
+			fyne.Do(func() {
+				a.setupSystemTrayMenu()
+			})
+		}()
+	})
 }
 
 func (a *App) showForgotPasswordDialog(parent fyne.Window, passwordDialogWindow fyne.Window) {
@@ -418,6 +497,10 @@ func (a *App) showForgotPasswordDialog(parent fyne.Window, passwordDialogWindow 
 					})
 					return
 				}
+
+				// Drop any cached master password for the deleted database.
+				keychainDeleteMasterPassword()
+				a.app.Preferences().SetBool("remember_master_password", false)
 
 				// Close the forgot password dialog
 				fyne.Do(func() {
@@ -486,6 +569,10 @@ func (a *App) showRemoveAllSettingsDialog() {
 					})
 					return
 				}
+
+				// Drop any cached master password for the deleted database.
+				keychainDeleteMasterPassword()
+				a.app.Preferences().SetBool("remember_master_password", false)
 
 				// Clear connections list and reload UI
 				fyne.Do(func() {
@@ -2322,6 +2409,11 @@ func (a *App) showApplicationSettingsDialog() {
 	pwdTimeoutEntry.SetText(fmt.Sprintf("%d", pwdGraceMin))
 	pwdTimeoutEntry.SetPlaceHolder("5")
 
+	// Remember the master password in this computer's OS keychain.
+	rememberPwd := a.app.Preferences().BoolWithFallback("remember_master_password", false)
+	rememberPwdCheck := widget.NewCheck("Remember master password in this computer's keychain", nil)
+	rememberPwdCheck.SetChecked(rememberPwd)
+
 	// Color pickers for panels
 	leftColorHex := a.app.Preferences().StringWithFallback("left_panel_color", "")
 	rightColorHex := a.app.Preferences().StringWithFallback("right_panel_color", "")
@@ -2442,6 +2534,27 @@ func (a *App) showApplicationSettingsDialog() {
 			a.settingsAuthExpiry = time.Time{}
 		}
 
+		// Apply the "remember master password" toggle.
+		wantRemember := rememberPwdCheck.Checked
+		if wantRemember != rememberPwd {
+			if wantRemember {
+				if a.db == nil {
+					dialog.ShowError(fmt.Errorf("cannot store master password: database is locked"), dialogWindow)
+					return
+				}
+				if err := keychainSetMasterPassword(a.db.MasterPassword()); err != nil {
+					dialog.ShowError(fmt.Errorf("failed to store master password in keychain: %w", err), dialogWindow)
+					return
+				}
+			} else {
+				if err := keychainDeleteMasterPassword(); err != nil {
+					dialog.ShowError(fmt.Errorf("failed to remove master password from keychain: %w", err), dialogWindow)
+					return
+				}
+			}
+			a.app.Preferences().SetBool("remember_master_password", wantRemember)
+		}
+
 		// Validate and save left panel color
 		leftColorStr := strings.TrimSpace(leftColorEntry.Text)
 		if leftColorStr == "" {
@@ -2507,6 +2620,9 @@ func (a *App) showApplicationSettingsDialog() {
 		widget.NewLabel("Master password re-prompt timeout (minutes):"),
 		pwdTimeoutEntry,
 		widget.NewLabel("After a successful master password entry, editing connections or changing the master password will not ask again until this period ends. Use 0 to require the password every time. Default is 5."),
+		widget.NewLabel(""),
+		rememberPwdCheck,
+		widget.NewLabel("When enabled, this computer's OS keychain stores your master password so you are not prompted at launch. The encrypted database is unchanged and stays portable: copied to another computer (with no keychain entry), it will still prompt for the master password."),
 		widget.NewLabel(""),
 		widget.NewLabel("Panel Colors:"),
 		widget.NewLabel("Left Panel:"),
@@ -2737,6 +2853,12 @@ func (a *App) showChangePasswordDialog() {
 		confirmPasswordEntry := widget.NewPasswordEntry()
 		confirmPasswordEntry.SetPlaceHolder("Confirm new password")
 
+		hintEntry := widget.NewEntry()
+		hintEntry.SetPlaceHolder("Optional hint (stored unencrypted)")
+		if a.db != nil {
+			hintEntry.SetText(a.db.GetPasswordHint())
+		}
+
 		var changeDialog dialog.Dialog
 
 		changePassword := func() {
@@ -2782,6 +2904,17 @@ func (a *App) showChangePasswordDialog() {
 			}
 			a.db = newDb
 
+			// Persist the (optional) password hint.
+			if err := a.db.SetPasswordHint(hintEntry.Text); err != nil {
+				dialog.ShowError(fmt.Errorf("failed to save password hint: %w", err), a.window)
+				return
+			}
+
+			// If the password is cached in this computer's keychain, refresh it.
+			if a.app.Preferences().BoolWithFallback("remember_master_password", false) {
+				keychainSetMasterPassword(newPassword)
+			}
+
 			changeDialog.Hide()
 			dialog.ShowInformation("Success", "Master password changed successfully", a.window)
 		}
@@ -2794,6 +2927,9 @@ func (a *App) showChangePasswordDialog() {
 			newPasswordEntry,
 			widget.NewLabel("Confirm New Password:"),
 			confirmPasswordEntry,
+			widget.NewLabel("Password Hint (optional):"),
+			hintEntry,
+			widget.NewLabel("Shown after 2 failed login attempts. Stored unencrypted — do not put the password itself here."),
 			container.NewHBox(
 				widget.NewButton("Change Password", changePassword),
 				widget.NewButton("Cancel", func() {
@@ -2803,7 +2939,7 @@ func (a *App) showChangePasswordDialog() {
 		)
 
 		changeDialog = dialog.NewCustom("Change Master Password", "", content, a.window)
-		changeDialog.Resize(fyne.NewSize(400, 300))
+		changeDialog.Resize(fyne.NewSize(420, 380))
 		changeDialog.Show()
 	})
 }

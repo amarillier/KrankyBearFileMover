@@ -13,10 +13,13 @@ A cross-platform dual-pane file transfer application built with Go and the Fyne 
   - **Rsync**: File synchronization with support for local and remote paths (optional SSH extra arguments, e.g. `ProxyJump`)
   - **LAN file agent**: Foreground CLI mode on the “receiver” machine; the GUI connects with TLS, a **pre-shared key**, and a **certificate pin**—useful when SSH or SMB is impractical (still requires a network path, e.g. LAN)
   - **Local File System**: Browse and manage local files
-- **Secure Credential Storage**: 
-  - Password-protected encrypted database (AES-256)
-  - Master password protection
-  - Encrypted storage of passwords and SSH key passphrases
+- **Secure Credential Storage**:
+  - Password-protected encrypted database (AES-256-GCM)
+  - Master password protection using **argon2id** key derivation with a random per-install salt
+  - **Full-field encryption at rest**: every sensitive field is encrypted (name, host, username, SSH key path, passphrase, remote/rsync paths, SSH extra args, password, and LAN agent TLS pin)
+  - **Optional OS keychain storage** of the master password (macOS Keychain, Windows Credential Manager, Linux Secret Service) so you are not prompted every launch — opt-in, and the database stays portable
+  - **Optional master password hint**, shown after two failed login attempts
+  - Databases from earlier versions are upgraded automatically on first unlock
 - **Connection Management**:
   - Save multiple connection profiles
   - Support for password authentication
@@ -58,7 +61,7 @@ A cross-platform dual-pane file transfer application built with Go and the Fyne 
 
 ### Prerequisites
 
-- Go 1.21 or later
+- Go 1.25 or later
 - CGO enabled (required for SQLite and SMB support)
 
 ### Building from Source
@@ -101,7 +104,7 @@ sudo dnf install -y alsa-lib mesa-libGL libX11
 
 ### First Launch
 
-1. **Set Master Password**: When you first launch the application, you'll be prompted to enter a master password. This password encrypts your stored connection credentials. **Remember this password** - you'll need it every time you launch the application.
+1. **Set Master Password**: When you first launch the application, you'll be prompted to create a master password. This password encrypts your stored connection credentials. **Remember this password** — by default you'll need it every time you launch the application, and **there is no recovery if you forget it**. Optionally, you can have this computer's OS keychain remember it for you (Settings → Application Settings) so you're not prompted at launch, and set a **password hint** that appears after two failed attempts.
 
 2. **Create a Connection**:
    - Click "New Connection" button
@@ -214,8 +217,9 @@ On **Windows**, if the agent’s root is a whole drive (e.g. **`-file-agent-root
 ### Settings Menu
 
 - **Theme Settings**: Change between Light, Dark, and Default themes
-- **Change Master Password**: Update your master password (re-encrypts all stored credentials)
-- **Remove ALL Settings**: Delete all stored connections and reset the application (requires confirmation)
+- **Application Settings**: Connection timeout, master-password re-prompt timeout, panel colors, and **Remember master password in this computer's keychain** (toggle on/off — turning it off removes the stored copy)
+- **Change Master Password**: Update your master password (re-encrypts all stored credentials) and optionally set or clear a **password hint**
+- **Remove ALL Settings**: Delete all stored connections and reset the application (requires confirmation; also clears any keychain-stored master password)
 - **Debug Mode**: Toggle verbose debug logging to file (useful for troubleshooting connection issues)
 - **View Debug Log**: View the debug log file in a scrollable window with option to open in system default editor
 
@@ -499,13 +503,16 @@ Or use the GUI:
 ### Credential Storage
 
 - All credentials are stored in an encrypted SQLite database located at `~/.filemover/connections.db`
-- Encryption uses AES-256 with PBKDF2 key derivation
-- The master password is never stored - it's used only to derive the encryption key
-- Passwords and SSH key passphrases are encrypted before storage
+- Encryption uses **AES-256-GCM**; the key is derived from your master password using **argon2id** with a **random per-install salt** stored in the database (so the database stays portable between computers)
+- **Every sensitive connection field is encrypted at rest** — name, host, username, SSH key path, key passphrase, remote and rsync paths, SSH extra arguments, password, and the LAN file-agent TLS pin. Only non-sensitive fields (type, port, timestamps) are kept in clear text
+- By default the master password is **never stored** — it is used only to derive the encryption key. Optionally, this computer's **OS keychain** (macOS Keychain, Windows Credential Manager, Linux Secret Service) can remember it to skip the launch prompt; the keychain only ever holds the master password, and the database remains portable
+- Databases created by earlier versions are **upgraded automatically** (stronger key derivation and full-field encryption) the first time you unlock them with the correct password
+- An optional, **unencrypted** master password hint can be shown after two failed login attempts — never put the password itself in the hint
 
 ### Best Practices
 
 - Use a strong master password
+- If you enable OS keychain storage of the master password, your OS account login becomes the protection for that cached copy — keep your account secured and lock it when away
 - Keep your SSH private keys secure
 - Use SSH key authentication when possible instead of passwords
 - Regularly back up your connection database (located at `~/.filemover/connections.db`)
@@ -514,7 +521,8 @@ Or use the GUI:
 
 ### Components
 
-- **database.go**: Encrypted credential storage using SQLite
+- **database.go**: Encrypted credential storage using SQLite (AES-256-GCM, argon2id key derivation, automatic legacy upgrade)
+- **keychain.go**: Optional OS keychain storage of the master password
 - **connections.go**: Protocol implementations (SFTP, SCP, SMB, Local)
 - **ui.go**: File browser widgets and UI components
 - **main.go**: Main application entry point and UI orchestration
@@ -528,11 +536,12 @@ Or use the GUI:
 
 ## Dependencies
 
-- [Fyne](https://fyne.io/) v2.6.3 - Cross-platform GUI toolkit
+- [Fyne](https://fyne.io/) v2.7.3 - Cross-platform GUI toolkit
 - [github.com/pkg/sftp](https://github.com/pkg/sftp) - SFTP client library
-- [golang.org/x/crypto/ssh](https://pkg.go.dev/golang.org/x/crypto/ssh) - SSH client implementation
+- [golang.org/x/crypto](https://pkg.go.dev/golang.org/x/crypto) - SSH client, AES-256-GCM, argon2id, PBKDF2
 - [github.com/hirochachacha/go-smb2](https://github.com/hirochachacha/go-smb2) - SMB2 client library
 - [github.com/mattn/go-sqlite3](https://github.com/mattn/go-sqlite3) - SQLite3 driver
+- [github.com/zalando/go-keyring](https://github.com/zalando/go-keyring) - OS keychain access for optional master-password storage
 
 ## Known Limitations
 
@@ -576,8 +585,9 @@ Or use the GUI:
 
 ### Database Issues
 
-- If you forget your master password, you'll need to delete `~/.filemover/connections.db` and recreate your connections
-- Back up the database file regularly to avoid data loss
+- If you forget your master password there is **no recovery**: you'll need to delete `~/.filemover/connections.db` and recreate your connections. (If you enabled OS keychain storage, the password is still retrievable on that computer via your system's keychain/credential manager.)
+- Back up the database file regularly to avoid data loss. The backup is self-contained and portable — restoring it on another computer will prompt for the same master password
+- **First unlock after upgrading** re-encrypts the database to the new format; if you roll back to an older version afterward, it will not be able to read the upgraded database
 
 ### Build Issues
 
