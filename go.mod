@@ -8,8 +8,8 @@ require (
 	github.com/mattn/go-sqlite3 v1.14.32
 	github.com/pkg/sftp v1.13.10
 	github.com/zalando/go-keyring v0.2.8
-	golang.org/x/crypto v0.45.0
-	golang.org/x/sys v0.38.0
+	golang.org/x/crypto v0.51.0
+	golang.org/x/sys v0.45.0
 )
 
 require (
@@ -44,7 +44,7 @@ require (
 	github.com/stretchr/testify v1.11.1 // indirect
 	github.com/yuin/goldmark v1.7.8 // indirect
 	golang.org/x/image v0.38.0 // indirect
-	golang.org/x/net v0.47.0 // indirect
-	golang.org/x/text v0.35.0 // indirect
+	golang.org/x/net v0.55.0 // indirect
+	golang.org/x/text v0.37.0 // indirect
 	gopkg.in/yaml.v3 v3.0.1 // indirect
 )
