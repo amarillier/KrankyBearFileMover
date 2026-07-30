@@ -11,8 +11,10 @@ import (
 	"time"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/dialog"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 )
 
@@ -55,10 +57,11 @@ func (a *App) localFileAgentRunning() bool {
 }
 
 // showFileAgentLocalWindow runs the LAN file agent from the GUI (same protocol as CLI -file-agent).
-func (a *App) showFileAgentLocalWindow() {
+// It returns the window it creates (nil if an agent was already running and no window was opened).
+func (a *App) showFileAgentLocalWindow() fyne.Window {
 	if a.localFileAgentRunning() {
 		dialog.ShowInformation("LAN file agent", "An agent is already running. Stop it from the agent window first.", a.window)
-		return
+		return nil
 	}
 
 	w := a.app.NewWindow("LAN file agent (this computer)")
@@ -207,4 +210,32 @@ func (a *App) showFileAgentLocalWindow() {
 	})
 	a.registerDialog(w)
 	a.centerDialogOnMainWindow(w)
+
+	return w
+}
+
+// runFileAgentWindowOnly opens just the LAN file agent window (share root, PSK, pin, Start/Stop) —
+// no main FileMover window and no connections database. It's a lighter, GUI-only alternative to
+// headless -file-agent: the listener is controlled by the window's own Stop button and close box
+// instead of console Ctrl+C, which on Windows can be swallowed by the launching shell (see -file-agent
+// help text). Blocks until the window is closed.
+func runFileAgentWindowOnly() {
+	myApp := app.NewWithID("com.github.amarillier.FileMover")
+
+	switch myApp.Preferences().StringWithFallback("theme", "default") {
+	case "light":
+		myApp.Settings().SetTheme(&appTheme{Theme: theme.LightTheme()})
+	case "dark":
+		myApp.Settings().SetTheme(&appTheme{Theme: theme.DarkTheme()})
+	default:
+		myApp.Settings().SetTheme(&appTheme{Theme: theme.DefaultTheme()})
+	}
+
+	a := &App{
+		app:          myApp,
+		openDialogs:  make(map[string]fyne.Window),
+		childWindows: []fyne.Window{},
+	}
+	a.showFileAgentLocalWindow()
+	myApp.Run()
 }

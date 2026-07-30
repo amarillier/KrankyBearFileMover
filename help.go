@@ -44,6 +44,15 @@ It is not the host’s /home/... unless you set -file-agent-root to / or to that
    It is not designed for crossing routed VLANs, NAT/port-forwards, or lab topologies where you would
    normally use SSH/RDP port mapping — for those cases use SFTP, SCP, or SMB in FileMover instead.
 
+   Windows/PowerShell note: launching with plain "& filemover.exe -file-agent" returns to the prompt
+   immediately (it's a GUI-subsystem exe) and Ctrl+C can be swallowed by PowerShell's own line editor
+   instead of stopping the agent. Simplest fix: run "filemover -file-agent-window" instead — it opens
+   just the agent window (PSK/pin + Start/Stop button, no console dependency at all). Otherwise use
+   cmd.exe, or from PowerShell run it with:
+     Start-Process -FilePath filemover.exe -ArgumentList '-file-agent' -NoNewWindow -Wait
+   so PowerShell actually waits for it and Ctrl+C works normally. Or just set -file-agent-ttl, or
+   close the console window / use the Tools menu GUI agent (Stop button) instead.
+
 2) Copy the printed TLS fingerprint (64 hex chars) into the connection profile’s “TLS certificate pin”.
    Each new agent run gets a new certificate—update the pin after restarting the agent.
 

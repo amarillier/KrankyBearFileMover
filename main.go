@@ -66,7 +66,7 @@ type App struct {
 
 const (
 	// appName    = "KrankyBear FileMover"
-	appVersion               = "0.3.0" // keep in sync with FyneApp.toml; bump with ./setver.sh
+	appVersion               = "0.3.1" // keep in sync with FyneApp.toml; bump with ./setver.sh
 	appAuthor                = "Allan Marillier"
 	defaultConnectionTimeout = 10 * time.Second // Default connection timeout
 	debugLogFileName         = "debug.log"
@@ -2989,6 +2989,7 @@ func (a *App) reencryptDatabase(oldPassword, newPassword string) error {
 // first to ensure it's on the same display as the main window, then center it.
 func (a *App) centerDialogOnMainWindow(dialogWindow fyne.Window) {
 	if a.window == nil {
+		dialogWindow.Show()
 		dialogWindow.CenterOnScreen()
 		return
 	}
@@ -3313,17 +3314,20 @@ func (a *App) Run() {
 func main() {
 	prepareWindowsCLI()
 
-	fileAgent := flag.Bool("file-agent", false, "Run LAN TLS file agent (foreground, no GUI). Stop with Ctrl+C. Any other -file-agent-* flag on the command line implies this mode.")
+	fileAgent := flag.Bool("file-agent", false, "Run LAN TLS file agent (foreground, no GUI). Stop with Ctrl+C (on Windows PowerShell, use cmd.exe or 'Start-Process -NoNewWindow -Wait' if bare Ctrl+C doesn't stop it). Any other -file-agent-* flag on the command line implies this mode.")
 	agentListen := flag.String("file-agent-listen", fileAgentDefaultListen, "Agent listen address (e.g. :9742 or 192.168.1.5:9742)")
 	agentRoot := flag.String("file-agent-root", ".", "Root directory to share")
 	agentPSK := flag.String("file-agent-psk", "", "Pre-shared key (a random key is generated and printed if empty)")
 	agentLANOnly := flag.Bool("file-agent-lan-only", true, "Accept only loopback, private, or link-local client IPs")
 	agentTTL := flag.Duration("file-agent-ttl", 0, "Stop the agent after this duration (e.g. 30m, 2h). 0 means run until Ctrl+C.")
+	fileAgentWindow := flag.Bool("file-agent-window", false, "Open only the LAN file agent window (PSK/pin + Start/Stop) — no main FileMover window or database. Avoids relying on console Ctrl+C entirely; ignores other -file-agent-* flags.")
 
 	flag.Usage = func() {
 		fmt.Fprintf(os.Stderr, "Usage: %s [options]\n\n", filepath.Base(os.Args[0]))
 		fmt.Fprintln(os.Stderr, "Default: start the graphical application.")
 		fmt.Fprintln(os.Stderr, "Headless: pass -file-agent or any -file-agent-* flag (LAN TLS file agent, no GUI).")
+		fmt.Fprintln(os.Stderr, "-file-agent-window: open only the LAN file agent window (Stop button, no console).")
+		fmt.Fprintln(os.Stderr, "-version: print the version number and exit.")
 		fmt.Fprintln(os.Stderr, "")
 		flag.PrintDefaults()
 	}
@@ -3332,13 +3336,21 @@ func main() {
 		case "-h", "--help", "-?", "/?":
 			flag.Usage()
 			os.Exit(0)
+		case "-version", "--version":
+			fmt.Println(appVersion)
+			os.Exit(0)
 		}
 	}
 	flag.Parse()
 
+	if *fileAgentWindow {
+		runFileAgentWindowOnly()
+		return
+	}
+
 	impliedAgent := false
 	flag.Visit(func(f *flag.Flag) {
-		if f.Name == "file-agent" {
+		if f.Name == "file-agent" || f.Name == "file-agent-window" {
 			return
 		}
 		if strings.HasPrefix(f.Name, "file-agent") {
@@ -3348,6 +3360,7 @@ func main() {
 	if *fileAgent || impliedAgent {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
+		defer installWindowsCtrlHandler(stop)()
 		if err := runFileAgent(ctx, *agentListen, *agentRoot, *agentPSK, *agentLANOnly, *agentTTL); err != nil {
 			fmt.Fprintf(os.Stderr, "%v\n", err)
 			os.Exit(1)

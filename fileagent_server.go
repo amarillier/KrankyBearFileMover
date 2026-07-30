@@ -85,6 +85,9 @@ func runFileAgentLog(ctx context.Context, addr, root, psk string, lanOnly bool, 
 	defer ln.Close()
 
 	fmt.Fprintf(logw, "FileMover LAN file agent — root %s\nListening on %s (effective %s, TLS 1.3, PSK auth)\nLAN-only peers: %v\nEach run uses a new TLS certificate; update the saved TLS pin in the client profile after restarting the agent.\nPress Ctrl+C or send SIGINT to stop.\n", rootAbs, addr, ln.Addr().String(), lanOnly)
+	if runtime.GOOS == "windows" {
+		fmt.Fprintf(logw, "Windows/PowerShell: if bare Ctrl+C doesn't stop it, use cmd.exe, or launch via\n  Start-Process -FilePath <exe> -ArgumentList '-file-agent' -NoNewWindow -Wait\nor close this console window.\n")
+	}
 	fileAgentDebugf("agent listener %v", ln.Addr())
 
 	go func() {

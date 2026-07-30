@@ -2,7 +2,28 @@
 KrankyBear FileMover - RELEASE NOTES
 ═══════════════════════════════════════════════════════════════════════════════
 Future ideas:
-- 
+- Windows: ship a console-subsystem build of the CLI/-file-agent path so PowerShell waits for it
+  like any normal CLI tool, making Ctrl+C reliable without the workarounds noted in 0.3.1.
+
+Version 0.3.1 - July 30, 2026
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+- Windows file agent: registers its own console control handler after attaching to the parent
+  console, since AttachConsole resets the process's handler table and could otherwise silently
+  drop Go's own signal handling. This makes closing the console window / logoff / shutdown reliably
+  stop the agent.
+- Known issue: on Windows, launching "-file-agent" with plain "& filemover.exe -file-agent" from
+  PowerShell can still swallow Ctrl+C — PowerShell doesn't wait for GUI-subsystem exes, so it resumes
+  its own prompt immediately and its line editor (PSReadLine) can intercept Ctrl+C as a keystroke
+  before Windows turns it into a stop signal. Simplest fix: use the new -file-agent-window flag below.
+  Otherwise, run it from cmd.exe, or from PowerShell use
+  "Start-Process -FilePath filemover.exe -ArgumentList '-file-agent' -NoNewWindow -Wait", or set
+  -file-agent-ttl, or just close the console window.
+- New -file-agent-window flag: opens only the LAN file agent window (share root, PSK, pin,
+  Start/Stop button) with no main FileMover window and no connections database. Sidesteps the
+  Ctrl+C/console issue above entirely since the listener is stopped with a real button/close box
+  instead of a console signal.
+- Added -version (prints the version number and exits; also works from a plain double-click-built
+  exe since headless flags now attach to the parent console for output).
 
 Version 0.3.0 - May 29, 2026
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
